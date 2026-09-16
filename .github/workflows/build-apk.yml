@@ -43,10 +43,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: ${{ env.JAVA_VERSION }}
@@ -54,18 +54,42 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Install SDK platform, build tools and NDK
+      - name: Install SDK components and NDK
         run: |
-          set -e
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --install "platform-tools" > /dev/null
-          sdkmanager --install "platforms;android-37" "build-tools;37.0.0" > /dev/null || {
-            echo "Platform install failed; letting AGP download what it needs."
-          }
-          if sdkmanager --install "ndk;27.2.12479018" > /dev/null 2>&1; then
-            echo "ANDROID_NDK_HOME=${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk/27.2.12479018" >> "$GITHUB_ENV"
+          # sdkmanager is not on PATH on every runner image, and a missing
+          # component must not fail the job: AGP downloads platforms and build
+          # tools itself, and android/build-native.sh accepts any installed NDK.
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER=""
+          for candidate in \
+            "$(command -v sdkmanager 2>/dev/null || true)" \
+            "$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager" \
+            "$SDK_ROOT/cmdline-tools/bin/sdkmanager" \
+            "$SDK_ROOT/tools/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager"
+          do
+            if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              break
+            fi
+          done
+          if [ -z "$SDKMANAGER" ]; then
+            echo "No sdkmanager found; leaving SDK setup to AGP."
+            exit 0
+          fi
+          echo "Using $SDKMANAGER"
+          (yes || true) | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --install "platform-tools" > /dev/null 2>&1 \
+            || echo "platform-tools install failed"
+          # android-37 is recent enough that it may only be on a preview channel.
+          "$SDKMANAGER" --install "platforms;android-37" "build-tools;37.0.0" > /dev/null 2>&1 \
+            || "$SDKMANAGER" --channel=3 --install "platforms;android-37" "build-tools;37.0.0" > /dev/null 2>&1 \
+            || echo "android-37 not preinstalled; AGP will try to download it"
+          if "$SDKMANAGER" --install "ndk;27.2.12479018" > /dev/null 2>&1; then
+            echo "ANDROID_NDK_HOME=$SDK_ROOT/ndk/27.2.12479018" >> "$GITHUB_ENV"
+            echo "Pinned NDK 27.2 installed."
           else
-            echo "Pinned NDK unavailable; android/build-native.sh will pick one."
+            echo "Pinned NDK unavailable; build-native.sh will pick an installed one."
           fi
 
       - name: Unit tests
