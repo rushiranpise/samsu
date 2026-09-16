@@ -72,7 +72,7 @@ class AutoRootService : Service() {
         }
 
         val history = RunHistoryStore(this)
-        val entry = history.begin("Auto root", null, false)
+        val entry = history.begin("Auto root", false)
         val lines = StringBuilder()
         job = scope.launch {
             var outcome = AutoRootOutcome(false, false, "not started")
@@ -104,6 +104,9 @@ class AutoRootService : Service() {
                     entry,
                     if (outcome.rooted) RunResult.Succeeded else RunResult.Failed,
                     lines.toString(),
+                    // Null when the attempt was refused before choosing
+                    // artifacts; the record must not claim a payload then.
+                    outcome.payloadId,
                 )
             }
             notify(buildNotification(summary))

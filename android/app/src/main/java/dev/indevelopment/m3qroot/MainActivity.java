@@ -134,6 +134,12 @@ public final class MainActivity extends AppCompatActivity {
     private PayloadIntegrityStore payloadIntegrity;
     private volatile UpdateInfo latestUpdate;
     private volatile RunHistoryEntry activeRun;
+    /**
+     * The payload the open run actually used, or null when it never chose one.
+     * Only runs that resolve artifacts declare it, so a run refused at a gate
+     * cannot end up credited with a payload that was never part of it.
+     */
+    private volatile String activeRunPayloadId;
     private final StringBuilder activeRunLog = new StringBuilder();
 
     @Override
@@ -863,6 +869,7 @@ public final class MainActivity extends AppCompatActivity {
                     progress -> ui.post(
                             () -> setStatusDetail("Auto root: " + progress)));
             rooted = outcome.getRooted();
+            declareRunPayload(RunPayloadAttribution.selectedByRun(outcome.getPayloadId()));
             append("Auto Root: " + outcome.getDetail());
         } catch (Exception error) {
             append("Auto Root failed: " + error.getMessage());
@@ -913,6 +920,7 @@ public final class MainActivity extends AppCompatActivity {
     private void runPostRootAutomation() {
         if (!PostRootAutomation.INSTANCE.isConfigured(this)) return;
         beginRunHistory("Post-root automation");
+        declareResolvedRunPayload();
         boolean accepted = false;
         try {
             PostRootOutcome outcome = PostRootAutomation.INSTANCE.runBlocking(
@@ -1355,6 +1363,7 @@ public final class MainActivity extends AppCompatActivity {
     private void lockUiForRun(String job) {
         stopSettleCountdown();
         beginRunHistory(job);
+        declareResolvedRunPayload();
         run.setEnabled(false);
         reapplyModules.setEnabled(false);
         restartZygote.setEnabled(false);
@@ -1775,13 +1784,33 @@ public final class MainActivity extends AppCompatActivity {
         synchronized (activeRunLog) {
             activeRunLog.setLength(0);
         }
+        activeRunPayloadId = null;
         try {
-            activeRun = runHistory.begin(job, activePayloadId,
+            activeRun = runHistory.begin(job,
                     ShizukuShell.isRunning() && ShizukuShell.isGranted());
         } catch (Exception error) {
             activeRun = null;
             append("Could not start a run record: " + error.getMessage());
         }
+    }
+
+    /**
+     * Declares the payload the open run used, or null when it used none. The
+     * decision itself lives in {@link RunPayloadAttribution}, which the test
+     * harness covers.
+     */
+    private void declareRunPayload(String payloadId) {
+        activeRunPayloadId = payloadId;
+    }
+
+    /**
+     * Declares the app's resolved payload for runs whose artifacts come from it.
+     * Null on a device this build has no payload for, where the resolved id is
+     * an automatic fallback rather than something the run would execute.
+     */
+    private void declareResolvedRunPayload() {
+        declareRunPayload(
+                RunPayloadAttribution.resolved(activePayloadId, deviceSupported()));
     }
 
     private void captureRunLog(String line) {
@@ -1804,8 +1833,10 @@ public final class MainActivity extends AppCompatActivity {
             log = activeRunLog.toString();
             activeRunLog.setLength(0);
         }
+        String payloadId = activeRunPayloadId;
+        activeRunPayloadId = null;
         try {
-            runHistory.finish(entry, result, log);
+            runHistory.finish(entry, result, log, payloadId);
         } catch (Exception error) {
             append("Could not store the run record: " + error.getMessage());
         }
@@ -1835,7 +1866,7 @@ public final class MainActivity extends AppCompatActivity {
         index.add("model=" + Build.MODEL);
         index.add("firmware=" + Build.FINGERPRINT);
         index.add("kernel=" + System.getProperty("os.version", "unknown"));
-        index.add("payload=" + activePayloadId);
+        index.add("current_payload=" + activePayloadId);
         index.add("runs=" + completed);
         index.add("exported_at=" + new java.text.SimpleDateFormat(
                 "yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));

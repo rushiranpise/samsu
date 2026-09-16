@@ -9,10 +9,13 @@ javac -encoding UTF-8 -d "$output" \
     "$script_dir/app/src/main/java/dev/indevelopment/m3qroot/RootSafetyPolicy.java" \
     "$script_dir/app/src/main/java/dev/indevelopment/m3qroot/LogRedactor.java" \
     "$script_dir/app/src/main/java/dev/indevelopment/m3qroot/VersionCompare.java" \
+    "$script_dir/app/src/main/java/dev/indevelopment/m3qroot/RunPayloadAttribution.java" \
     "$script_dir/tests/RootSafetyPolicyTest.java" \
     "$script_dir/tests/LogRedactorTest.java" \
-    "$script_dir/tests/VersionCompareTest.java"
+    "$script_dir/tests/VersionCompareTest.java" \
+    "$script_dir/tests/RunPayloadAttributionTest.java"
 
 java -cp "$output" dev.indevelopment.m3qroot.RootSafetyPolicyTest
 java -cp "$output" dev.indevelopment.m3qroot.LogRedactorTest
 java -cp "$output" dev.indevelopment.m3qroot.VersionCompareTest
+java -cp "$output" dev.indevelopment.m3qroot.RunPayloadAttributionTest

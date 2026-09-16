@@ -20,10 +20,17 @@ import dev.indevelopment.m3qroot.ShizukuBridge
 import java.io.File
 import kotlinx.coroutines.delay
 
+/**
+ * [payloadId] is the payload whose artifacts this attempt selected, or null when
+ * the run was refused before any payload was chosen. It is null rather than the
+ * device's ambient payload on purpose: a refusal at the device gate must never
+ * report an artifact that was not part of the attempt.
+ */
 data class AutoRootOutcome(
     val ran: Boolean,
     val rooted: Boolean,
     val detail: String,
+    val payloadId: String? = null,
 )
 
 object AutoRoot {
@@ -92,6 +99,9 @@ object AutoRoot {
             )
         }
 
+        // Everything past this point has chosen artifacts, so the outcome names
+        // the payload from here on.
+
         // Artifacts are chosen before the integrity gate so the gate can judge
         // exactly what would run.
         val payloadId = session.prepareArtifacts()
@@ -109,6 +119,7 @@ object AutoRoot {
                 false,
                 "these artifacts have not been verified on this firmware yet; " +
                     "root once by hand to establish the baseline",
+                payloadId = payloadId,
             )
         }
 
@@ -129,6 +140,7 @@ object AutoRoot {
                 false,
                 false,
                 "the once-per-boot attempt could not be claimed",
+                payloadId = payloadId,
             )
         }
 
@@ -145,6 +157,7 @@ object AutoRoot {
                 true,
                 false,
                 "process control was lost; do not retry before rebooting",
+                payloadId = payloadId,
             )
         }
 
@@ -165,6 +178,7 @@ object AutoRoot {
             } else {
                 "the payload ran but KernelSU root did not verify; reboot to retry"
             },
+            payloadId = payloadId,
         )
     }
 

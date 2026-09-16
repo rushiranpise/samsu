@@ -29,6 +29,12 @@ data class RunHistoryEntry(
     val completedAtMillis: Long?,
     val result: RunResult,
     val log: String,
+    /**
+     * The payload whose artifacts this run actually used, or null when the run
+     * never chose one. It is declared by the run when it finishes, never
+     * guessed up front: a run refused before artifact selection must not claim
+     * a payload that was never part of it.
+     */
     val payloadId: String? = null,
     val usedShizuku: Boolean = false,
 )
@@ -68,9 +74,12 @@ class RunHistoryStore(private val context: Context) {
         return closed
     }
 
+    /**
+     * Opens a run. The payload is deliberately not a parameter: it can only be
+     * declared at [finish], once the run knows what it actually used.
+     */
     fun begin(
         job: String,
-        payloadId: String? = null,
         usedShizuku: Boolean = false,
     ): RunHistoryEntry = RunHistoryEntry(
         id = UUID.randomUUID().toString(),
@@ -79,7 +88,7 @@ class RunHistoryStore(private val context: Context) {
         completedAtMillis = null,
         result = RunResult.Running,
         log = "",
-        payloadId = payloadId,
+        payloadId = null,
         usedShizuku = usedShizuku,
     )
 
@@ -88,11 +97,26 @@ class RunHistoryStore(private val context: Context) {
         entry: RunHistoryEntry,
         result: RunResult,
         log: String,
+    ): RunHistoryEntry = finish(entry, result, log, payloadId = null)
+
+    /**
+     * Writes the terminal state, declaring the payload the run used.
+     *
+     * A null [payloadId] is meaningful rather than missing data: it records that
+     * the run never selected a payload, which is the honest outcome for a run
+     * refused before artifact selection.
+     */
+    fun finish(
+        entry: RunHistoryEntry,
+        result: RunResult,
+        log: String,
+        payloadId: String?,
     ): RunHistoryEntry {
         val completed = entry.copy(
             completedAtMillis = System.currentTimeMillis(),
             result = result,
             log = trimLog(log),
+            payloadId = payloadId?.takeIf(String::isNotBlank),
         )
         save(completed)
         return completed
