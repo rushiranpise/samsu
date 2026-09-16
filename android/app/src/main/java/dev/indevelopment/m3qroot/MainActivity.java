@@ -42,6 +42,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import rikka.shizuku.Shizuku;
 
+import dev.indevelopment.m3qroot.rmg.IntegrityResult;
+import dev.indevelopment.m3qroot.rmg.IntegrityVerdict;
+import dev.indevelopment.m3qroot.rmg.PayloadIntegrityStore;
+import dev.indevelopment.m3qroot.rmg.PinnedPayload;
 import dev.indevelopment.m3qroot.rmg.RunHistoryEntry;
 import dev.indevelopment.m3qroot.rmg.RunHistoryExporter;
 import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
@@ -101,6 +105,7 @@ public final class MainActivity extends AppCompatActivity {
     private volatile boolean payloadResolved;
     private volatile java.util.List<PayloadStore.Profile> lastRegistry;
     private RunHistoryStore runHistory;
+    private PayloadIntegrityStore payloadIntegrity;
     private volatile RunHistoryEntry activeRun;
     private final StringBuilder activeRunLog = new StringBuilder();
 
@@ -135,6 +140,7 @@ public final class MainActivity extends AppCompatActivity {
         });
 
         runHistory = new RunHistoryStore(this);
+        payloadIntegrity = new PayloadIntegrityStore(this);
         worker.execute(this::closeInterruptedRunHistory);
 
         append("==== device diagnostics ====");
@@ -323,8 +329,10 @@ public final class MainActivity extends AppCompatActivity {
                     + "attempting anyway.");
         }
         File cached = PayloadStore.cachedPayload(this, match.payloadId);
-        boolean exploitFresh = cached.isFile()
+        boolean exploitSizeOk = cached.isFile()
                 && (match.exploitSize <= 0 || cached.length() == match.exploitSize);
+        boolean exploitFresh = exploitSizeOk
+                && cachedArtifactIsCurrent(match.payloadId, cached, null, "payload");
         if (exploitFresh) {
             activePayloadId = match.payloadId;
             activeProfile = match;
@@ -334,9 +342,14 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         if (cached.isFile()) {
-            append("Cached payload " + match.payloadId + " is stale ("
-                    + cached.length() + " bytes, expected "
-                    + match.exploitSize + "); re-downloading.");
+            if (exploitSizeOk) {
+                append("Cached payload " + match.payloadId
+                        + " failed its integrity check; re-downloading.");
+            } else {
+                append("Cached payload " + match.payloadId + " is stale ("
+                        + cached.length() + " bytes, expected "
+                        + match.exploitSize + "); re-downloading.");
+            }
             cached.delete();
         }
         append("Downloading payload " + match.payloadId + " ...");
@@ -374,13 +387,21 @@ public final class MainActivity extends AppCompatActivity {
             return;
         }
         File cachedKsud = PayloadStore.cachedKsud(this, match.payloadId);
-        boolean ksudFresh = cachedKsud.isFile()
+        boolean ksudSizeOk = cachedKsud.isFile()
                 && (match.ksudSize <= 0 || cachedKsud.length() == match.ksudSize);
+        boolean ksudFresh = ksudSizeOk
+                && cachedArtifactIsCurrent(match.payloadId, null, cachedKsud,
+                        "KernelSU daemon");
         if (!ksudFresh) {
             if (cachedKsud.isFile()) {
-                append("Cached KernelSU daemon " + match.payloadId
-                        + " is stale (" + cachedKsud.length() + " bytes, expected "
-                        + match.ksudSize + "); re-downloading.");
+                if (ksudSizeOk) {
+                    append("Cached KernelSU daemon " + match.payloadId
+                            + " failed its integrity check; re-downloading.");
+                } else {
+                    append("Cached KernelSU daemon " + match.payloadId
+                            + " is stale (" + cachedKsud.length() + " bytes, expected "
+                            + match.ksudSize + "); re-downloading.");
+                }
                 cachedKsud.delete();
             }
             append("Downloading KernelSU daemon " + match.payloadId + " ...");
@@ -656,6 +677,7 @@ public final class MainActivity extends AppCompatActivity {
         File ksud = PayloadStore.cachedKsud(this, payloadId);
         boolean removedExploit = !exploit.isFile() || exploit.delete();
         boolean removedKsud = !ksud.isFile() || ksud.delete();
+        payloadIntegrity.forget(payloadId);
         append("Removed cached payload " + payloadId
                 + (removedExploit && removedKsud ? "." : " (partial)."));
         if (activePayloadId != null && activePayloadId.equals(payloadId)) {
@@ -781,6 +803,7 @@ public final class MainActivity extends AppCompatActivity {
         if (!running.compareAndSet(false, true)) return;
         lockUiForRun("Fresh root");
         append("==== fresh-root start ====");
+        verifyActiveArtifacts();
 
         if (ShizukuShell.isRunning()) {
             int uid = ShizukuShell.uid();
@@ -1151,6 +1174,7 @@ public final class MainActivity extends AppCompatActivity {
                 setStatus("Rooted", STATUS_SUCCESS);
                 setStatusDetail("ADBsu root bridge loaded");
                 run.setVisibility(View.GONE);
+                pinActiveArtifacts();
                 openPackage(KSU_MANAGER_PACKAGE,
                         "Grant SU to SamSU and refresh.");
             } else if (state.bootstrap()) {
@@ -1247,6 +1271,69 @@ public final class MainActivity extends AppCompatActivity {
             if (skipped == 0) return text;
             return "[Head and truncated first lines omitted]\n"
                     + LogRedactor.dropPartialFirstLine(text);
+        }
+    }
+
+    /* ---- payload integrity ------------------------------------------- */
+
+    private void appendIntegrity(String payloadId, IntegrityResult result) {
+        append("Integrity (" + payloadId + "): " + result.getVerdict()
+                + " - " + result.getDetail());
+        if (result.getExploitSha256() != null) {
+            append("  payload sha256=" + result.getExploitSha256());
+        }
+        if (result.getKsudSha256() != null) {
+            append("  ksud sha256=" + result.getKsudSha256());
+        }
+    }
+
+    /**
+     * True when a cached artifact still matches its verified baseline. A cache
+     * that no longer matches is dropped so the download path refetches it, which
+     * self-heals truncation and a stale copy from an older app version.
+     */
+    private boolean cachedArtifactIsCurrent(String payloadId, File exploit, File ksud,
+            String what) {
+        IntegrityResult result = payloadIntegrity.verify(payloadId, exploit, ksud);
+        appendIntegrity(payloadId, result);
+        if (result.getVerdict() == IntegrityVerdict.Corrupt
+                || result.getVerdict() == IntegrityVerdict.ForeignBuild) {
+            append("Discarding the cached " + what + " so it is fetched again.");
+            return false;
+        }
+        return true;
+    }
+
+    /** Pre-run check of the exact artifacts this run is about to execute. */
+    private void verifyActiveArtifacts() {
+        try {
+            IntegrityResult result = payloadIntegrity.verify(activePayloadId,
+                    engine.activePayloadFile(), engine.activeKsudFile());
+            appendIntegrity(activePayloadId, result);
+            engine.setActivePayloadHash(result.getExploitSha256());
+            if (result.getVerdict() == IntegrityVerdict.Untracked) {
+                append("No verified run recorded for this payload yet; it becomes "
+                        + "the baseline after a run that verifies KernelSU.");
+            } else if (!result.isTrusted()) {
+                append("WARNING: the artifacts no longer match the verified baseline. "
+                        + "Continuing, and the baseline is refreshed only after a run "
+                        + "that verifies KernelSU.");
+            }
+        } catch (Exception error) {
+            append("Payload integrity check unavailable: " + error.getMessage());
+        }
+    }
+
+    /** Refresh the baseline, but only from a run that actually reached root. */
+    private void pinActiveArtifacts() {
+        try {
+            PinnedPayload record = payloadIntegrity.pin(activePayloadId,
+                    engine.activePayloadFile(), engine.activeKsudFile());
+            if (record != null) {
+                append("Verified baseline pinned for " + activePayloadId + ".");
+            }
+        } catch (Exception error) {
+            append("Could not pin the verified baseline: " + error.getMessage());
         }
     }
 

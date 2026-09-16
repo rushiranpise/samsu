@@ -854,6 +854,8 @@ final class M3qRootEngine {
             writer.newLine();
             writer.write("exit=" + exitCode);
             writer.newLine();
+            writer.write("payload_sha256=" + activePayloadHash);
+            writer.newLine();
             synchronized (lines) {
                 for (String line : lines) {
                     writer.write(line);
@@ -886,6 +888,7 @@ final class M3qRootEngine {
 
     /** Registry-provided ksud for the active payload; null = bundled build. */
     private volatile File ksudOverride;
+    private volatile String activePayloadHash = "";
     private volatile long ksudOverrideSize = -1;
     private volatile String kmiOverride;
 
@@ -912,6 +915,20 @@ final class M3qRootEngine {
     private String activeKmi() {
         String kmi = kmiOverride;
         return (kmi == null || kmi.isEmpty()) ? "android15-6.6" : kmi;
+    }
+
+    /** Artifacts the next run will execute, for pre-run integrity checks. */
+    File activePayloadFile() {
+        return activePayload();
+    }
+
+    File activeKsudFile() {
+        return activeKsud();
+    }
+
+    /** SHA-256 of the payload used, recorded in the run log for later exports. */
+    void setActivePayloadHash(String hash) {
+        activePayloadHash = hash == null ? "" : hash;
     }
 
     void setPayloadOverride(File file) {
