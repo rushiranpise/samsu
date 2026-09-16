@@ -37,6 +37,21 @@
     <string name="adb_pair_wrong_code" translatable="false">The pairing code was incorrect</string>
     <string name="adb_pair_unknown_error" translatable="false">Unknown pairing error</string>
     <string name="adb_pair_notification_permission_required" translatable="false">Notification access is required for the one-time Wireless ADB pairing code prompt.</string>
+    <!-- Optional Shizuku auto-start, adapted from Root-My-Galaxy-Extended. -->
+    <string name="shizuku_section_title">Shizuku</string>
+    <string name="shizuku_section_description">Start Shizuku automatically after a reboot, using the KernelSU root shell when it exists and the paired local ADB shell otherwise.</string>
+    <string name="shizuku_start_now">Start Shizuku now</string>
+    <string name="shizuku_boot_on">Start on boot: on</string>
+    <string name="shizuku_boot_off">Start on boot: off</string>
+    <string name="shizuku_status_format">Shizuku: %1$s</string>
+    <string name="shizuku_notification_channel">Shizuku start-up</string>
+    <string name="shizuku_notification_title">Starting Shizuku</string>
+    <string name="shizuku_notification_checking">Looking for a shell transport…</string>
+    <string name="shizuku_notification_started">Shizuku is running (via %1$s)</string>
+    <string name="shizuku_notification_failed">Could not start Shizuku: %1$s</string>
+    <string name="shizuku_last_result_started">last attempt: started via %1$s</string>
+    <string name="shizuku_last_result_failed">last attempt failed: %1$s</string>
+    <string name="shizuku_last_result_blocked">last attempt: the system refused the background start</string>
     <string name="adb_section_title">Wireless ADB</string>
     <string name="adb_section_description">Pair once with this device\u2019s own Wireless Debugging to get a shell transport without a PC.</string>
     <string name="adb_pair_action">Pair wireless ADB</string>

@@ -15,7 +15,9 @@ Ported code lives under `dev.indevelopment.m3qroot.rmg` and carries its origin
 in the file header. Ported so far: run history and log archiving, payload
 verification, in-app update, boot-settle policy, and the in-app Wireless
 ADB transport (local ADB client, TLS 1.3/SPAKE2 pairing, mDNS discovery,
-temporary Wireless Debugging scope).
+temporary Wireless Debugging scope), and Shizuku auto-start (starter
+resolution, cross-process start lock, authenticated-intent fallback, boot
+service).
 
 Reference: https://github.com/igorcv88/Root-My-Galaxy-Extended
 

@@ -54,6 +54,9 @@ import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
 import dev.indevelopment.m3qroot.rmg.RunResult;
 import dev.indevelopment.m3qroot.rmg.UpdateInfo;
 import dev.indevelopment.m3qroot.rmg.AdbTestOutcome;
+import dev.indevelopment.m3qroot.rmg.ShizukuAutoStart;
+import dev.indevelopment.m3qroot.rmg.ShizukuPrefs;
+import dev.indevelopment.m3qroot.rmg.ShizukuStartOutcome;
 import dev.indevelopment.m3qroot.rmg.WirelessAdbFacade;
 
 public final class MainActivity extends AppCompatActivity {
@@ -110,6 +113,8 @@ public final class MainActivity extends AppCompatActivity {
     private MaterialButton bootSettleButton;
     private TextView adbStatus;
     private MaterialButton adbPairButton;
+    private TextView shizukuStatus;
+    private MaterialButton shizukuBootButton;
     private boolean diagnosticsVisible;
     private boolean runIsReboot;
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
@@ -204,6 +209,8 @@ public final class MainActivity extends AppCompatActivity {
         renderBootSettleButton();
         adbStatus = findViewById(R.id.adb_status);
         adbPairButton = findViewById(R.id.adb_pair);
+        shizukuStatus = findViewById(R.id.shizuku_status);
+        shizukuBootButton = findViewById(R.id.shizuku_boot);
     }
 
     private static String deviceMarketingLabel() {
@@ -250,6 +257,9 @@ public final class MainActivity extends AppCompatActivity {
         findViewById(R.id.adb_test).setOnClickListener(
                 v -> worker.execute(this::testWirelessAdb));
         findViewById(R.id.adb_forget).setOnClickListener(v -> forgetWirelessAdbKey());
+        findViewById(R.id.shizuku_start).setOnClickListener(
+                v -> worker.execute(this::startShizukuNow));
+        shizukuBootButton.setOnClickListener(v -> toggleShizukuOnBoot());
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
         findViewById(R.id.export_history).setOnClickListener(
                 v -> worker.execute(this::exportRunHistory));
@@ -266,6 +276,7 @@ public final class MainActivity extends AppCompatActivity {
         });
         }
         renderWirelessAdbStatus();
+        renderShizukuStatus();
     }
 
     private void onRunHoldAction() {
@@ -775,6 +786,44 @@ public final class MainActivity extends AppCompatActivity {
                 ? "Local ADB key removed; pair again to use the shell transport."
                 : "Local ADB key could not be fully removed.");
         renderWirelessAdbStatus();
+        renderShizukuStatus();
+    }
+
+    /* ---- Shizuku auto-start ------------------------------------------ */
+
+    private void renderShizukuStatus() {
+        String state;
+        if (ShizukuBridge.isRunning()) {
+            state = ShizukuBridge.isGranted()
+                    ? "running (uid " + ShizukuBridge.uid() + ")"
+                    : "running, permission not granted";
+        } else {
+            String last = ShizukuPrefs.INSTANCE.lastResult(this);
+            state = last.isEmpty() ? "not running" : "not running \u00b7 " + last;
+        }
+        shizukuStatus.setText(getString(R.string.shizuku_status_format, state));
+        shizukuBootButton.setText(ShizukuPrefs.INSTANCE.startOnBoot(this)
+                ? R.string.shizuku_boot_on : R.string.shizuku_boot_off);
+    }
+
+    private void toggleShizukuOnBoot() {
+        boolean enabled = !ShizukuPrefs.INSTANCE.startOnBoot(this);
+        ShizukuPrefs.INSTANCE.setStartOnBoot(this, enabled);
+        append(enabled
+                ? "Shizuku will be started after each reboot: KernelSU root shell "
+                        + "first, paired local ADB otherwise."
+                : "Shizuku boot start disabled.");
+        renderShizukuStatus();
+    }
+
+    private void startShizukuNow() {
+        append("==== Shizuku auto-start ====");
+        ShizukuStartOutcome outcome = ShizukuAutoStart.INSTANCE.startBlocking(
+                this, line -> append("  " + line));
+        append(outcome.getStarted()
+                ? "Shizuku started via " + outcome.getMethod() + "."
+                : "Shizuku was not started: " + outcome.getDetail());
+        ui.post(this::renderShizukuStatus);
     }
 
     /**

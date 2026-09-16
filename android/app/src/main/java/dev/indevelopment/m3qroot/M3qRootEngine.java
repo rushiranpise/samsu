@@ -595,6 +595,15 @@ final class M3qRootEngine {
         return code;
     }
 
+    /**
+     * Runs one shell command as root through KernelSU. Used by the automation
+     * layer (Shizuku startup, secure-settings grant) rather than by the
+     * activity's hold-to-run jobs.
+     */
+    int runRootCommand(String command, int timeoutSeconds, List<String> output) {
+        return runKernelSuRootCommand(activeKsud(), command, timeoutSeconds, output);
+    }
+
     int rebootDevice() {
         List<String> output = new ArrayList<>();
         int code = runKernelSuRootCommand(activeKsud(), "reboot", 30, output);
