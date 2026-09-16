@@ -580,6 +580,21 @@ final class M3qRootEngine {
         }
     }
 
+    /**
+     * Best-effort one-time grant of WRITE_SECURE_SETTINGS, which is what lets
+     * the app toggle Wireless Debugging for a temporary local-ADB session
+     * without a PC. Only meaningful once KernelSU root is verified.
+     */
+    int grantSecureSettings() {
+        List<String> output = new ArrayList<>();
+        int code = runKernelSuRootCommand(activeKsud(),
+                "pm grant " + context.getPackageName()
+                        + " android.permission.WRITE_SECURE_SETTINGS",
+                30, output);
+        for (String line : output) log(line);
+        return code;
+    }
+
     int rebootDevice() {
         List<String> output = new ArrayList<>();
         int code = runKernelSuRootCommand(activeKsud(), "reboot", 30, output);

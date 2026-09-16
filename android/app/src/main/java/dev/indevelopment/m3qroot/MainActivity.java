@@ -53,6 +53,8 @@ import dev.indevelopment.m3qroot.rmg.RunHistoryExporter;
 import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
 import dev.indevelopment.m3qroot.rmg.RunResult;
 import dev.indevelopment.m3qroot.rmg.UpdateInfo;
+import dev.indevelopment.m3qroot.rmg.AdbTestOutcome;
+import dev.indevelopment.m3qroot.rmg.WirelessAdbFacade;
 
 public final class MainActivity extends AppCompatActivity {
     private static final int SHIZUKU_PERMISSION_REQUEST = 0x4d33;
@@ -103,6 +105,8 @@ public final class MainActivity extends AppCompatActivity {
     private MaterialButton unrootReboot;
     private MaterialButton diagnosticsToggle;
     private MaterialButton bootSettleButton;
+    private TextView adbStatus;
+    private MaterialButton adbPairButton;
     private boolean diagnosticsVisible;
     private boolean runIsReboot;
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
@@ -195,6 +199,8 @@ public final class MainActivity extends AppCompatActivity {
         diagnosticsToggle = findViewById(R.id.diagnostics_toggle);
         bootSettleButton = findViewById(R.id.boot_settle);
         renderBootSettleButton();
+        adbStatus = findViewById(R.id.adb_status);
+        adbPairButton = findViewById(R.id.adb_pair);
     }
 
     private static String deviceMarketingLabel() {
@@ -237,6 +243,10 @@ public final class MainActivity extends AppCompatActivity {
         statusRefresh.setOnClickListener(v -> worker.execute(this::refreshRootState));
         diagnosticsToggle.setOnClickListener(v -> toggleDiagnostics());
         bootSettleButton.setOnClickListener(v -> showBootSettleDialog());
+        adbPairButton.setOnClickListener(v -> startWirelessAdbPairing());
+        findViewById(R.id.adb_test).setOnClickListener(
+                v -> worker.execute(this::testWirelessAdb));
+        findViewById(R.id.adb_forget).setOnClickListener(v -> forgetWirelessAdbKey());
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
         findViewById(R.id.export_history).setOnClickListener(
                 v -> worker.execute(this::exportRunHistory));
@@ -252,6 +262,7 @@ public final class MainActivity extends AppCompatActivity {
             refreshRootState();
         });
         }
+        renderWirelessAdbStatus();
     }
 
     private void onRunHoldAction() {
@@ -697,6 +708,84 @@ public final class MainActivity extends AppCompatActivity {
                 refreshRootState();
             });
         }
+    }
+
+    /* ---- in-app wireless ADB ----------------------------------------- */
+
+    private void renderWirelessAdbStatus() {
+        try {
+            boolean paired = WirelessAdbFacade.INSTANCE.isPaired(this);
+            adbPairButton.setText(paired
+                    ? R.string.adb_pair_repair_action : R.string.adb_pair_action);
+            adbStatus.setText(getString(R.string.adb_status_format,
+                    WirelessAdbFacade.INSTANCE.statusSummary(this)));
+        } catch (Exception error) {
+            adbStatus.setText(getString(R.string.adb_status_format,
+                    "unavailable (" + error.getMessage() + ")"));
+        }
+    }
+
+    /**
+     * Pairing needs Wireless Debugging switched on, and the code is only shown
+     * by Settings, so send the user there and leave the pairing service
+     * listening for the pairing port in the meantime.
+     */
+    private void startWirelessAdbPairing() {
+        try {
+            WirelessAdbFacade.INSTANCE.startPairing(this,
+                    WirelessAdbFacade.INSTANCE.isPaired(this));
+            append("Wireless ADB pairing started; approve the notification prompt.");
+        } catch (Exception error) {
+            append("Could not start Wireless ADB pairing: " + error.getMessage());
+            return;
+        }
+        if (!WirelessAdbFacade.INSTANCE.hasWriteSecureSettings(this)) {
+            append("Wireless Debugging must be switched on by hand for this pairing. "
+                    + "Opening Developer options; tap \"Wireless debugging\", enable it, "
+                    + "then \"Pair device with pairing code\".");
+        } else {
+            append("Enable Wireless debugging and tap \"Pair device with pairing code\" "
+                    + "to get the 6-digit code.");
+        }
+        WirelessAdbFacade.INSTANCE.openDeveloperSettings(this);
+    }
+
+    private void testWirelessAdb() {
+        append("==== wireless ADB connection test ====");
+        AdbTestOutcome outcome = WirelessAdbFacade.INSTANCE.testConnection(this);
+        append("Wireless ADB: " + outcome.getSummary());
+        append("  " + outcome.getDetail());
+        final String summary = outcome.getSummary();
+        ui.post(() -> {
+            adbStatus.setText(getString(R.string.adb_status_format, summary));
+            renderWirelessAdbStatus();
+        });
+        if (outcome.getOk()) {
+            grantSecureSettingsIfPossible();
+        }
+    }
+
+    /** Removes only this app's ADB identity; adbd's own entry is left alone. */
+    private void forgetWirelessAdbKey() {
+        boolean cleared = WirelessAdbFacade.INSTANCE.forgetCredential(this);
+        append(cleared
+                ? "Local ADB key removed; pair again to use the shell transport."
+                : "Local ADB key could not be fully removed.");
+        renderWirelessAdbStatus();
+    }
+
+    /**
+     * One-time grant so Wireless Debugging can later be toggled without a PC.
+     * Only tried after root is verified, since it needs a root shell.
+     */
+    private void grantSecureSettingsIfPossible() {
+        if (WirelessAdbFacade.INSTANCE.hasWriteSecureSettings(this)) return;
+        if (!engine.checkRoot(false).ready()) return;
+        int code = engine.grantSecureSettings();
+        append("WRITE_SECURE_SETTINGS grant exit=" + code
+                + (code == 0
+                        ? " (background Wireless Debugging enabled)"
+                        : " (grant failed; toggle Wireless Debugging by hand)"));
     }
 
     /* ---- boot-settle wait -------------------------------------------- */
@@ -1266,6 +1355,7 @@ public final class MainActivity extends AppCompatActivity {
                 setStatusDetail("ADBsu root bridge loaded");
                 run.setVisibility(View.GONE);
                 pinActiveArtifacts();
+                grantSecureSettingsIfPossible();
                 openPackage(KSU_MANAGER_PACKAGE,
                         "Grant SU to SamSU and refresh.");
             } else if (state.bootstrap()) {

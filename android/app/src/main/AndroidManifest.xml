@@ -1,8 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- Granted once, after the first verified root run, so Wireless Debugging
+         can be toggled for a temporary local-ADB session. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <queries>
         <package android:name="me.weishu.kernelsu" />
         <package android:name="moe.shizuku.privileged.api" />
@@ -31,6 +41,20 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        <service
+            android:name="dev.indevelopment.m3qroot.rmg.AdbPairingService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="One-time Wireless Debugging pairing code prompt" />
+        </service>
+        <receiver
+            android:name="dev.indevelopment.m3qroot.rmg.WirelessAdbCleanupReceiver"
+            android:exported="false" />
+        <activity
+            android:name="dev.indevelopment.m3qroot.rmg.AdbPairingSetupActivity"
+            android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

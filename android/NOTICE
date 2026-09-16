@@ -13,7 +13,9 @@ igorcv88/Root-My-Galaxy-Extended (`dev.busung.s25uroot`), which derives from
 BuSung-dev/Root-My-Galaxy. Both are distributed under the Apache License 2.0.
 Ported code lives under `dev.indevelopment.m3qroot.rmg` and carries its origin
 in the file header. Ported so far: run history and log archiving, payload
-verification, in-app update, boot-settle policy.
+verification, in-app update, boot-settle policy, and the in-app Wireless
+ADB transport (local ADB client, TLS 1.3/SPAKE2 pairing, mDNS discovery,
+temporary Wireless Debugging scope).
 
 Reference: https://github.com/igorcv88/Root-My-Galaxy-Extended
 
