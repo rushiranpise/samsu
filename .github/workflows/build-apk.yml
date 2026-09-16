@@ -128,7 +128,10 @@ jobs:
             NAME="$(grep -oE "version_label\">[^<]+" android/app/src/main/res/values/strings.xml \
               | head -1 | sed 's/.*>//')"
           fi
-          CODE="${GITHUB_RUN_NUMBER}"
+          # Offset above the historical local default (25) so a CI build always
+          # outranks a locally assembled one; otherwise alternating between them
+          # makes Android refuse installs as downgrades.
+          CODE=$((1000 + GITHUB_RUN_NUMBER))
           echo "name=${NAME}" >> "$GITHUB_OUTPUT"
           echo "code=${CODE}" >> "$GITHUB_OUTPUT"
           echo "Stamping versionName=${NAME} versionCode=${CODE}"
