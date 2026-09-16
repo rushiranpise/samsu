@@ -135,6 +135,10 @@ jobs:
             NAME="$(grep -oE "version_label\">[^<]+" android/app/src/main/res/values/strings.xml \
               | head -1 | sed 's/.*>//')"
           fi
+          # A tag's name is read without its "v"; a typed-in version may carry one.
+          # Normalise here so the tag, the asset names and versionName all agree
+          # and a "v" is never doubled.
+          NAME="${NAME#v}"
           # Offset above the historical local default (25) so a CI build always
           # outranks a locally assembled one; otherwise alternating between them
           # makes Android refuse installs as downgrades.
