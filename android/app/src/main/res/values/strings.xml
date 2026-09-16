@@ -20,6 +20,11 @@
     <string name="diagnostics_description">Technical details and run history. Not needed for normal use.</string>
     <string name="export_log">Export diagnostic log</string>
     <string name="export_history">Export run history (zip)</string>
+    <string name="boot_settle_button">Boot wait: %1$d min</string>
+    <string name="boot_settle_title">Boot-settle wait</string>
+    <string name="boot_settle_message_millis">Minimum kernel uptime before a root run is allowed. Shorter is faster after a reboot but leaves the exploit racing a kernel that is still settling.</string>
+    <string name="boot_settle_wait_long">%1$d seconds</string>
+    <string name="boot_settle_applied">Boot wait set to %1$d seconds.</string>
     <string name="update_title">SamSU update available</string>
     <string name="update_message">Version %1$s is available; this build is %2$s.</string>
     <string name="update_install">Download and install</string>

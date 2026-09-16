@@ -267,6 +267,22 @@
                     android:enabled="false"
                     android:text="@string/soft_root"
                     android:textColor="@color/reload_text" />
+
+                <View
+                    android:layout_width="match_parent"
+                    android:layout_height="1dp"
+                    android:layout_marginTop="10dp"
+                    android:layout_marginBottom="10dp"
+                    android:background="?attr/colorOutlineVariant" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/boot_settle"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:text="@string/boot_settle_button"
+                    android:textColor="#66FFFFFF"
+                    android:textSize="14sp" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

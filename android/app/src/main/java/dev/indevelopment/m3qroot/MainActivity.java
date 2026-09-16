@@ -102,6 +102,7 @@ public final class MainActivity extends AppCompatActivity {
     private MaterialButton statusRefresh;
     private MaterialButton unrootReboot;
     private MaterialButton diagnosticsToggle;
+    private MaterialButton bootSettleButton;
     private boolean diagnosticsVisible;
     private boolean runIsReboot;
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
@@ -117,6 +118,7 @@ public final class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle state) {
         super.onCreate(state);
         Shizuku.addRequestPermissionResultListener(shizukuPermissionListener);
+        RootSafetyPolicy.setConfiguredSeconds(BootSettlePreferences.seconds(this));
         getWindow().setDecorFitsSystemWindows(false);
         setContentView(R.layout.activity_main);
         applySystemBarInsets(findViewById(R.id.page_scroll));
@@ -191,6 +193,8 @@ public final class MainActivity extends AppCompatActivity {
         statusRefresh = findViewById(R.id.status_refresh);
         unrootReboot = findViewById(R.id.unroot_reboot);
         diagnosticsToggle = findViewById(R.id.diagnostics_toggle);
+        bootSettleButton = findViewById(R.id.boot_settle);
+        renderBootSettleButton();
     }
 
     private static String deviceMarketingLabel() {
@@ -232,6 +236,7 @@ public final class MainActivity extends AppCompatActivity {
         bindHoldAction(unrootReboot, "Unroot", HOLD_TO_CONFIRM_MILLIS, this::startUnrootReboot);
         statusRefresh.setOnClickListener(v -> worker.execute(this::refreshRootState));
         diagnosticsToggle.setOnClickListener(v -> toggleDiagnostics());
+        bootSettleButton.setOnClickListener(v -> showBootSettleDialog());
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
         findViewById(R.id.export_history).setOnClickListener(
                 v -> worker.execute(this::exportRunHistory));
@@ -694,6 +699,40 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
+    /* ---- boot-settle wait -------------------------------------------- */
+
+    private void renderBootSettleButton() {
+        bootSettleButton.setText(getString(R.string.boot_settle_button,
+                RootSafetyPolicy.configuredSeconds() / 60));
+    }
+
+    private void showBootSettleDialog() {
+        long[] allowed = RootSafetyPolicy.allowedSeconds();
+        CharSequence[] labels = new CharSequence[allowed.length];
+        int selected = 0;
+        for (int i = 0; i < allowed.length; i++) {
+            labels[i] = getString(R.string.boot_settle_wait_long, allowed[i]);
+            if (allowed[i] == RootSafetyPolicy.configuredSeconds()) selected = i;
+        }
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.boot_settle_title)
+                .setMessage(R.string.boot_settle_message_millis)
+                .setSingleChoiceItems(labels, selected, (dialog, which) -> {
+                    dialog.dismiss();
+                    applyBootSettleSeconds(allowed[which]);
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    private void applyBootSettleSeconds(long seconds) {
+        RootSafetyPolicy.setConfiguredSeconds(seconds);
+        BootSettlePreferences.set(this, seconds);
+        renderBootSettleButton();
+        append(getString(R.string.boot_settle_applied, seconds));
+        worker.execute(this::refreshRootState);
+    }
+
     private void toggleDiagnostics() {
         diagnosticsVisible = !diagnosticsVisible;
         diagnosticsCard.setVisibility(diagnosticsVisible ? View.VISIBLE : View.GONE);
@@ -1022,7 +1061,8 @@ public final class MainActivity extends AppCompatActivity {
             unrootReboot.setEnabled(false);
             statusRefresh.setEnabled(true);
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            setStatus("Wait 180 seconds", STATUS_NEUTRAL);
+            long settle = RootSafetyPolicy.configuredSeconds();
+            setStatus("Wait " + settle + " seconds", STATUS_NEUTRAL);
             setStatusDetail("Device was freshly booted, wait for idle.");
         });
     }
@@ -1061,8 +1101,9 @@ public final class MainActivity extends AppCompatActivity {
             run.setVisibility(View.VISIBLE);
             setStatus("Unrooted", STATUS_NEUTRAL);
             setStatusDetail(deviceSupported()
-                    ? "Device verified - Wait 180s after boot"
-                    : "Wait 180s after boot");
+                    ? "Device verified - Wait " + RootSafetyPolicy.configuredSeconds()
+                            + "s after boot"
+                    : "Wait " + RootSafetyPolicy.configuredSeconds() + "s after boot");
             run.setText(R.string.root_activate);
             run.setEnabled(deviceSupported());
         }
