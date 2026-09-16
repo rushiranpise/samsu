@@ -20,6 +20,10 @@
     <string name="diagnostics_description">Technical details and run history. Not needed for normal use.</string>
     <string name="export_log">Export diagnostic log</string>
     <string name="export_history">Export run history (zip)</string>
+    <string name="update_title">SamSU update available</string>
+    <string name="update_message">Version %1$s is available; this build is %2$s.</string>
+    <string name="update_install">Download and install</string>
+    <string name="update_open_page">Open release page</string>
     <string name="unroot_reboot">Hold to unroot</string>
     <string name="share_subject">SamSU diagnostics report</string>
     <string name="share_chooser">Share diagnostics report</string>

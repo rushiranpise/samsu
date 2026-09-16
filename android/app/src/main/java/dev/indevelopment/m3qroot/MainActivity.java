@@ -42,6 +42,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import rikka.shizuku.Shizuku;
 
+import dev.indevelopment.m3qroot.rmg.AppUpdater;
+import dev.indevelopment.m3qroot.rmg.DownloadProgress;
 import dev.indevelopment.m3qroot.rmg.IntegrityResult;
 import dev.indevelopment.m3qroot.rmg.IntegrityVerdict;
 import dev.indevelopment.m3qroot.rmg.PayloadIntegrityStore;
@@ -50,6 +52,7 @@ import dev.indevelopment.m3qroot.rmg.RunHistoryEntry;
 import dev.indevelopment.m3qroot.rmg.RunHistoryExporter;
 import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
 import dev.indevelopment.m3qroot.rmg.RunResult;
+import dev.indevelopment.m3qroot.rmg.UpdateInfo;
 
 public final class MainActivity extends AppCompatActivity {
     private static final int SHIZUKU_PERMISSION_REQUEST = 0x4d33;
@@ -106,6 +109,7 @@ public final class MainActivity extends AppCompatActivity {
     private volatile java.util.List<PayloadStore.Profile> lastRegistry;
     private RunHistoryStore runHistory;
     private PayloadIntegrityStore payloadIntegrity;
+    private volatile UpdateInfo latestUpdate;
     private volatile RunHistoryEntry activeRun;
     private final StringBuilder activeRunLog = new StringBuilder();
 
@@ -177,15 +181,7 @@ public final class MainActivity extends AppCompatActivity {
         versionChip = findViewById(R.id.version_chip);
         updateChip = findViewById(R.id.update_chip);
         versionChip.setText(appVersion());
-        updateChip.setOnClickListener(v -> {
-            try {
-                startActivity(new android.content.Intent(
-                        android.content.Intent.ACTION_VIEW,
-                        android.net.Uri.parse("https://github.com/mitschud/samsu/releases")));
-            } catch (Exception ignored) {
-                /* No browser on device — leave the pill non-functional rather than crash. */
-            }
-        });
+        updateChip.setOnClickListener(v -> showUpdateDialog());
         worker.execute(this::checkForAppUpdate);
         log = findViewById(R.id.log);
         log.setMovementMethod(new ScrollingMovementMethod());
@@ -1111,29 +1107,83 @@ public final class MainActivity extends AppCompatActivity {
 
     private void checkForAppUpdate() {
         try {
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL(
-                            "https://api.github.com/repos/mitschud/samsu/releases/latest")
-                            .openConnection();
-            conn.setConnectTimeout(8000);
-            conn.setReadTimeout(8000);
-            conn.setRequestProperty("Accept", "application/vnd.github+json");
-            conn.setRequestProperty("User-Agent", "SamSU");
-            if (conn.getResponseCode() != 200) return;
-            java.io.BufferedReader reader = new java.io.BufferedReader(
-                    new java.io.InputStreamReader(conn.getInputStream()));
-            StringBuilder body = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) body.append(line);
-            reader.close();
-            String tag = new org.json.JSONObject(body.toString()).optString("tag_name", "");
-            if (tag.isEmpty()) return;
-            if (tag.replaceFirst("^[vV]", "").trim()
-                    .equalsIgnoreCase(appVersion())) return;
+            UpdateInfo info = AppUpdater.INSTANCE.fetchLatestRelease(this);
+            if (info == null) return;
+            if (!VersionCompare.isNewer(info.getVersionName(), appVersion())) return;
+            latestUpdate = info;
             ui.post(() -> updateChip.setVisibility(View.VISIBLE));
         } catch (Exception ignored) {
             /* Offline, rate-limited, or API hiccup: stay silent, keep the plain chip. */
         }
+    }
+
+    private void showUpdateDialog() {
+        UpdateInfo info = latestUpdate;
+        if (info == null) return;
+        new MaterialAlertDialogBuilder(this)
+                .setTitle(getString(R.string.update_title))
+                .setMessage(getString(R.string.update_message,
+                        info.getVersionName(), appVersion()))
+                .setPositiveButton(R.string.update_install,
+                        (dialog, which) -> worker.execute(this::downloadAndInstallUpdate))
+                .setNeutralButton(R.string.update_open_page,
+                        (dialog, which) -> AppUpdater.INSTANCE.openReleasesPage(
+                                this, info.getReleaseUrl()))
+                .setNegativeButton(android.R.string.cancel, null)
+                .show();
+    }
+
+    /** Downloads the release APK, proves it is this app's next build, then installs. */
+    private void downloadAndInstallUpdate() {
+        UpdateInfo info = latestUpdate;
+        if (info == null) return;
+        String url = info.getApkUrl();
+        if (url == null || url.isEmpty()) {
+            append("Release " + info.getVersionName()
+                    + " publishes no APK asset; opening the release page instead.");
+            AppUpdater.INSTANCE.openReleasesPage(this, info.getReleaseUrl());
+            return;
+        }
+
+        append("Downloading SamSU " + info.getVersionName()
+                + " from " + info.getRepo() + " ...");
+        setStatus("Downloading update", STATUS_WORKING);
+        setStatusDetail("Fetching the release APK.");
+        final int[] lastPercent = {-1};
+        File apk = AppUpdater.INSTANCE.downloadApk(this, url, (DownloadProgress) fraction -> {
+            int percent = Math.round(fraction * 100f);
+            if (percent == lastPercent[0] || percent % 5 != 0) return;
+            lastPercent[0] = percent;
+            ui.post(() -> setStatusDetail("Downloading update " + percent + "%"));
+        });
+        if (apk == null || !apk.isFile()) {
+            append("Update download failed; nothing was installed.");
+            setStatus("Update failed", STATUS_WARNING);
+            setStatusDetail("Download failed. Check the connection and retry.");
+            return;
+        }
+        append("Update downloaded: " + apk.getName()
+                + " (" + apk.length() + " bytes)");
+
+        String problem = AppUpdater.INSTANCE.describeDownloadProblem(
+                this, apk, info.getVersionName(), appVersion());
+        if (!problem.isEmpty()) {
+            apk.delete();
+            append("Refused the downloaded update: " + problem + ".");
+            setStatus("Update refused", STATUS_WARNING);
+            setStatusDetail("The download was not this app's next build.");
+            return;
+        }
+        if (!AppUpdater.INSTANCE.installApk(this, apk)) {
+            append("The system installer refused to open; allow SamSU to install "
+                    + "unknown apps, then retry.");
+            setStatus("Installer blocked", STATUS_WARNING);
+            setStatusDetail("Allow installs from SamSU in system settings.");
+            return;
+        }
+        append("Installer opened; confirm there to finish the update.");
+        setStatus("Confirm the update", STATUS_SUCCESS);
+        setStatusDetail("Finish in the system installer.");
     }
 
     private static String normalizeKsuVersion(String versionName) {
