@@ -42,6 +42,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import rikka.shizuku.Shizuku;
 
+import dev.indevelopment.m3qroot.rmg.RunHistoryEntry;
+import dev.indevelopment.m3qroot.rmg.RunHistoryExporter;
+import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
+import dev.indevelopment.m3qroot.rmg.RunResult;
+
 public final class MainActivity extends AppCompatActivity {
     private static final int SHIZUKU_PERMISSION_REQUEST = 0x4d33;
     private static final long HOLD_TO_CONFIRM_MILLIS = 1400L;
@@ -50,6 +55,8 @@ public final class MainActivity extends AppCompatActivity {
     private static final int STATUS_WORKING = 0xff9a6700;
     private static final int STATUS_WARNING = 0xffb3261e;
     private static final int STATUS_NEUTRAL = 0xff5f6b76;
+    /** Rolling tail kept for the in-progress run record. */
+    private static final int RUN_LOG_KEEP_CHARS = 128 * 1024;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
@@ -93,6 +100,9 @@ public final class MainActivity extends AppCompatActivity {
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
     private volatile boolean payloadResolved;
     private volatile java.util.List<PayloadStore.Profile> lastRegistry;
+    private RunHistoryStore runHistory;
+    private volatile RunHistoryEntry activeRun;
+    private final StringBuilder activeRunLog = new StringBuilder();
 
     @Override
     protected void onCreate(Bundle state) {
@@ -123,6 +133,9 @@ public final class MainActivity extends AppCompatActivity {
                 append(line);
             }
         });
+
+        runHistory = new RunHistoryStore(this);
+        worker.execute(this::closeInterruptedRunHistory);
 
         append("==== device diagnostics ====");
         append("Model: " + Build.MODEL);
@@ -218,6 +231,8 @@ public final class MainActivity extends AppCompatActivity {
         statusRefresh.setOnClickListener(v -> worker.execute(this::refreshRootState));
         diagnosticsToggle.setOnClickListener(v -> toggleDiagnostics());
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
+        findViewById(R.id.export_history).setOnClickListener(
+                v -> worker.execute(this::exportRunHistory));
         payloadButton.setOnClickListener(v -> showPayloadDialog());
     }
 
@@ -739,7 +754,7 @@ public final class MainActivity extends AppCompatActivity {
                 append("Bootstrap root detected - finishing KernelSU activation without re-running the exploit.");
                 setStatus("Activating KernelSU", STATUS_WORKING);
                 setStatusDetail("Finalizes KernelSU setup without repeating kernel writes.");
-                ui.post(this::lockUiForRun);
+                ui.post(() -> lockUiForRun("Activate KernelSU"));
                 int code = engine.activateKernelSu();
                 append("KernelSU activation exit=" + code);
                 if (code == M3qRootEngine.EXIT_TERMINATION_UNCONFIRMED) {
@@ -764,7 +779,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void startExploit() {
         if (!running.compareAndSet(false, true)) return;
-        lockUiForRun();
+        lockUiForRun("Fresh root");
         append("==== fresh-root start ====");
 
         if (ShizukuShell.isRunning()) {
@@ -819,7 +834,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void startModuleReload() {
         if (!running.compareAndSet(false, true)) return;
-        lockUiForRun();
+        lockUiForRun("Module reload");
         setStatus("Reloading KernelSU module", STATUS_WORKING);
         setStatusDetail("Re-running the KernelSU module start step.");
         append("==== KernelSU module reapply start ====");
@@ -844,7 +859,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void startSoftBoot() {
         if (!running.compareAndSet(false, true)) return;
-        lockUiForRun();
+        lockUiForRun("Soft reboot");
         setStatus("Preparing soft reboot", STATUS_WORKING);
         setStatusDetail("Restarts the Android app runtime (Zygote).");
         append("Requesting a Zygote restart. If it succeeds, this app closes too.");
@@ -868,18 +883,18 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void startUnrootReboot() {
-        startRebootFlow("Rebooting to unroot",
+        startRebootFlow("Unroot reboot", "Rebooting to unroot",
                 "Device is restarting; root will be cleared.");
     }
 
     private void startRebootOnFail() {
-        startRebootFlow("Rebooting",
+        startRebootFlow("Reboot after failed run", "Rebooting",
                 "Device is restarting; boot counter will be cleared.");
     }
 
-    private void startRebootFlow(String workingTitle, String successDetail) {
+    private void startRebootFlow(String job, String workingTitle, String successDetail) {
         if (!running.compareAndSet(false, true)) return;
-        lockUiForRun();
+        lockUiForRun(job);
         setStatus(workingTitle, STATUS_WORKING);
         setStatusDetail("Device is rebooting.");
         worker.execute(() -> {
@@ -944,6 +959,7 @@ public final class MainActivity extends AppCompatActivity {
     }
     private void finishMaintenance(int code, M3qRootEngine.RootState state,
                                    String successText, String successDetail) {
+        finishRunHistory(code == 0 ? RunResult.Succeeded : RunResult.Failed);
         running.set(false);
         ui.post(() -> {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -965,7 +981,8 @@ public final class MainActivity extends AppCompatActivity {
         });
     }
 
-    private void lockUiForRun() {
+    private void lockUiForRun(String job) {
+        beginRunHistory(job);
         run.setEnabled(false);
         reapplyModules.setEnabled(false);
         restartZygote.setEnabled(false);
@@ -976,6 +993,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void abortPendingRun(String message) {
         append(message);
+        finishRunHistory(RunResult.Failed);
         running.set(false);
         ui.post(() -> {
             run.setVisibility(View.VISIBLE);
@@ -1124,6 +1142,7 @@ public final class MainActivity extends AppCompatActivity {
             finishUnconfirmedRun();
             return;
         }
+        finishRunHistory(state.ready() ? RunResult.Succeeded : RunResult.Failed);
         running.set(false);
         ui.post(() -> {
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -1157,6 +1176,7 @@ public final class MainActivity extends AppCompatActivity {
     private void finishUnconfirmedRun() {
         running.set(false);
         append("Process control was lost and exit could not be proven. Do not retry before rebooting.");
+        finishRunHistory(RunResult.Failed);
         ui.post(() -> {
             run.setVisibility(View.VISIBLE);
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -1230,6 +1250,113 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
+    /* ---- run history ------------------------------------------------ */
+
+    private void closeInterruptedRunHistory() {
+        try {
+            int closed = runHistory.closeInterruptedRuns();
+            if (closed > 0) {
+                append("Closed " + closed + " interrupted run record(s).");
+            }
+        } catch (Exception error) {
+            append("Run history unavailable: " + error.getMessage());
+        }
+    }
+
+    private void beginRunHistory(String job) {
+        if (runHistory == null) return;
+        RunHistoryEntry previous = activeRun;
+        if (previous != null) {
+            finishRunHistory(RunResult.Failed);
+            append("Previous run record was still open; closed it as failed.");
+        }
+        synchronized (activeRunLog) {
+            activeRunLog.setLength(0);
+        }
+        try {
+            activeRun = runHistory.begin(job, activePayloadId,
+                    ShizukuShell.isRunning() && ShizukuShell.isGranted());
+        } catch (Exception error) {
+            activeRun = null;
+            append("Could not start a run record: " + error.getMessage());
+        }
+    }
+
+    private void captureRunLog(String line) {
+        if (activeRun == null) return;
+        synchronized (activeRunLog) {
+            activeRunLog.append(line).append('\n');
+            if (activeRunLog.length() > 2 * RUN_LOG_KEEP_CHARS) {
+                activeRunLog.delete(0, activeRunLog.length() - RUN_LOG_KEEP_CHARS);
+                activeRunLog.insert(0, "[Earlier lines trimmed]\n");
+            }
+        }
+    }
+
+    private void finishRunHistory(RunResult result) {
+        RunHistoryEntry entry = activeRun;
+        if (entry == null || runHistory == null) return;
+        activeRun = null;
+        String log;
+        synchronized (activeRunLog) {
+            log = activeRunLog.toString();
+            activeRunLog.setLength(0);
+        }
+        try {
+            runHistory.finish(entry, result, log);
+        } catch (Exception error) {
+            append("Could not store the run record: " + error.getMessage());
+        }
+    }
+
+    private void exportRunHistory() {
+        java.util.List<RunHistoryEntry> entries;
+        try {
+            entries = runHistory.load();
+        } catch (Exception error) {
+            append("Failed to read run history: " + error.getMessage());
+            return;
+        }
+        int completed = 0;
+        for (RunHistoryEntry entry : entries) {
+            if (entry.getResult() != RunResult.Running) completed++;
+        }
+        if (completed == 0) {
+            append("No completed runs to export yet.");
+            setStatus("No run history", STATUS_NEUTRAL);
+            setStatusDetail("Hold to root once to create the first record.");
+            return;
+        }
+        java.util.List<String> index = new ArrayList<>();
+        index.add("SamSU run history");
+        index.add("app_version=" + appVersion());
+        index.add("model=" + Build.MODEL);
+        index.add("firmware=" + Build.FINGERPRINT);
+        index.add("kernel=" + System.getProperty("os.version", "unknown"));
+        index.add("payload=" + activePayloadId);
+        index.add("runs=" + completed);
+        index.add("exported_at=" + new java.text.SimpleDateFormat(
+                "yyyy-MM-dd HH:mm:ss", Locale.US).format(new java.util.Date()));
+
+        java.util.Map<String, String> appendices = new java.util.HashMap<>();
+        String lastLog = RunHistoryExporter.INSTANCE.readAppendix(
+                engine.lastRootLog(), 64 * 1024);
+        if (lastLog != null && !lastLog.isEmpty()) {
+            appendices.put("last-root.log", LogRedactor.redact(lastLog));
+        }
+
+        try {
+            String name = RunHistoryExporter.INSTANCE.export(
+                    this, entries, "SamSU", index, appendices);
+            append("Run history exported: Downloads/" + name
+                    + " (" + completed + " run(s))");
+            setStatus("History exported", STATUS_SUCCESS);
+            setStatusDetail("Downloads/" + name);
+        } catch (IOException error) {
+            append("Failed to export run history: " + error.getMessage());
+        }
+    }
+
     private void setStatus(String text, int semanticColor) {
         ui.post(() -> {
             int color = resolveStatusColor(semanticColor);
@@ -1251,6 +1378,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void append(String line) {
+        captureRunLog(line);
         ui.post(() -> {
             log.append(line + "\n");
             if (diagnosticsVisible) {

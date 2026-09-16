@@ -19,6 +19,7 @@
     <string name="diagnostics_title">Advanced diagnostic log</string>
     <string name="diagnostics_description">Technical details and run history. Not needed for normal use.</string>
     <string name="export_log">Export diagnostic log</string>
+    <string name="export_history">Export run history (zip)</string>
     <string name="unroot_reboot">Hold to unroot</string>
     <string name="share_subject">SamSU diagnostics report</string>
     <string name="share_chooser">Share diagnostics report</string>

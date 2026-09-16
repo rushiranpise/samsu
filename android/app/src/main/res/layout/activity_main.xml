@@ -294,6 +294,18 @@
             android:textColor="#66FFFFFF"
             android:textSize="14sp" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/export_history"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginEnd="16dp"
+            android:text="@string/export_history"
+            android:textColor="#66FFFFFF"
+            android:textSize="14sp" />
+
         <com.google.android.material.card.MaterialCardView
             android:id="@+id/diagnostics_card"
             android:layout_width="match_parent"
