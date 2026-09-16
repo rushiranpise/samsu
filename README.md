@@ -68,27 +68,35 @@ See [Root process](docs/ROOT_PROCESS.md) and [Technical reference](docs/REFERENC
 
 ## Build
 
-Requirements: JDK 17, Android SDK 37, and Android NDK.
+Requirements: JDK 17 (JDK 21 or newer for release builds, whose lint task needs it),
+Android SDK 37, and an Android NDK.
 
-Windows:
+```sh
+# native: the helper and the KASLR oracle, from exploit/
+sh android/build-native.sh
 
+# native: the three per-model payloads, compiled from the Root My Galaxy Payloads
+# tree at the commit pinned inside the script
+sh android/build-payloads.sh
 
-
-
-
-```powershell
-# payload (from a Root-My-Galaxy-Payloads checkout containing targets/pa1q-S931BXXUCZZI4)
-port\build_windows.cmd
-# then stage it for the app
-copy repo\Root-My-Galaxy-Payloads-main\build\pa1q-S931BXXUCZZI4\cve-2026-43499-app.release.so `
-     m3q-app\android\prebuilt\payload-pa1q-S931BXXUCZZI4.so
-
-# app
-cd m3q-app\android
-.\gradlew.bat --no-daemon :app:assembleRelease
+cd android
+./gradlew --no-daemon :app:assembleRelease \
+  -PnativeFromSource=true -PpayloadDir=build/payloads
 ```
 
-APK output: `m3q-app/android/app/build/outputs/apk/release/app-release.apk`.
+APK output: `android/app/build/outputs/apk/release/app-release.apk`.
+
+Without those two properties the build falls back to the binaries committed in
+`android/prebuilt/`, so a plain assemble needs no NDK and no network. `ksud` is
+always taken from there: it is a KernelSU late-load daemon published as a
+versioned artifact and pinned by SHA-256 in the engine, so replacing it is a
+change to the root flow rather than a build detail.
+
+[`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) runs the
+from-source path on every tagged commit and publishes both APKs as a GitHub
+release; a manual run publishes too when `publish` is checked. It installs NDK
+30.0.16138531 for the payloads because that is what upstream compiled them with,
+so the binaries it ships can be compared against the ones upstream validated.
 
 ## Repository layout
 

@@ -10,9 +10,14 @@ plugins {
  * is compiled from exploit/ instead of trusting a binary committed months
  * earlier.
  *
- * The other four libraries (the three per-model payloads and ksud) have no
- * source in this repository - they are per-kernel artifacts published upstream -
- * so they always come from prebuilt/.
+ * The three per-model payloads are compiled by android/build-payloads.sh from
+ * the Root My Galaxy Payloads source; CI passes -PpayloadDir to package those
+ * builds, while a plain build falls back to the copies in prebuilt/.
+ *
+ * ksud is the one remaining binary with no buildable source here: it is a
+ * KernelSU late-load daemon published as a versioned artifact, and the engine
+ * pins its SHA-256, so replacing it is a change to the root flow rather than a
+ * build detail.
  */
 def nativeFromSource = providers.gradleProperty('nativeFromSource')
         .map { it.toBoolean() }
@@ -26,6 +31,17 @@ def oracleSource = nativeFromSource
         : rootProject.file('prebuilt/oracle-slide_oracle.app.so')
 
 def ksudBin = rootProject.file('prebuilt/ksud-m3q-S948NKSS4AZG3-kdp')
+
+/*
+ * Where the three bundled payloads come from. -PpayloadDir=build/payloads
+ * packages payloads compiled from source (that path is relative to android/,
+ * matching the other overrides); without it the committed copies are used.
+ */
+def payloadDir = providers.gradleProperty('payloadDir')
+        .map { rootProject.file(it) }
+        .getOrElse(rootProject.file('prebuilt'))
+def payloadFile = { name -> new File(payloadDir, name) }
+
 def jniOut = file('src/main/jniLibs/arm64-v8a')
 
 /*
@@ -44,13 +60,13 @@ tasks.register('prepareM3qPayloads', Copy) {
     from(helperSource) {
         rename { 'libm3qroot.so' }
     }
-    from(rootProject.file('prebuilt/payload-pa1q-S931BXXUCZZI4.so')) {
+    from(payloadFile('payload-pa1q-S931BXXUCZZI4.so')) {
         rename { 'libm3qpayload.so' }
     }
-    from(rootProject.file('prebuilt/payload-pa3q-S938BXXUCZZI4.so')) {
+    from(payloadFile('payload-pa3q-S938BXXUCZZI4.so')) {
         rename { 'libm3qpayload_s938b.so' }
     }
-    from(rootProject.file('prebuilt/payload-pa2q-S936BXXUCZZI4.so')) {
+    from(payloadFile('payload-pa2q-S936BXXUCZZI4.so')) {
         rename { 'libm3qpayload_s936b.so' }
     }
     from(oracleSource) {
@@ -72,9 +88,9 @@ tasks.register('verifyM3qNativeInputs') {
     def required = [
             [helperSource, 'libm3qroot.so'],
             [oracleSource, 'libm3qoracle.so'],
-            [rootProject.file('prebuilt/payload-pa1q-S931BXXUCZZI4.so'), 'libm3qpayload.so'],
-            [rootProject.file('prebuilt/payload-pa2q-S936BXXUCZZI4.so'), 'libm3qpayload_s936b.so'],
-            [rootProject.file('prebuilt/payload-pa3q-S938BXXUCZZI4.so'), 'libm3qpayload_s938b.so'],
+            [payloadFile('payload-pa1q-S931BXXUCZZI4.so'), 'libm3qpayload.so'],
+            [payloadFile('payload-pa2q-S936BXXUCZZI4.so'), 'libm3qpayload_s936b.so'],
+            [payloadFile('payload-pa3q-S938BXXUCZZI4.so'), 'libm3qpayload_s938b.so'],
             [ksudBin, 'libm3qksud.so'],
     ]
     doLast {
@@ -89,7 +105,9 @@ tasks.register('verifyM3qNativeInputs') {
                         'The app loads all six of these at runtime:\n' + report + '\n' +
                         (nativeFromSource
                                 ? '  (nativeFromSource is on: run android/build-native.sh first)'
-                                : '  (drop -PnativeFromSource, or refresh the committed prebuilts)'))
+                                : '  (drop -PnativeFromSource, or refresh the committed prebuilts)') +
+                        '\n  (for the payloads: run android/build-payloads.sh and pass' +
+                        " -PpayloadDir=build/payloads, or drop that property to use prebuilt/)")
     }
 }
 

@@ -2,12 +2,20 @@ name: Build APK
 
 # Builds both APKs from source and attaches them to a GitHub release.
 #
-# The native side is compiled here rather than trusted from the committed
-# prebuilts: android/build-native.sh produces the helper and oracle from exploit/,
-# and the APKs are assembled with -PnativeFromSource=true. The remaining four
-# libraries (three per-model payloads and ksud) have no source in this repository
-# - they are per-kernel artifacts published upstream - so they still come from
-# android/prebuilt/.
+# Five of the six native libraries the app loads are compiled here rather than
+# trusted from the committed prebuilts:
+#
+#   android/build-native.sh    helper + oracle, from exploit/
+#   android/build-payloads.sh  the three per-model payloads, from the Root My
+#                              Galaxy Payloads tree at a pinned commit
+#
+# The APKs are assembled with -PnativeFromSource=true -PpayloadDir=build/payloads,
+# so nothing is packaged from android/prebuilt/ except ksud: that one is a
+# KernelSU late-load daemon published as a versioned artifact and pinned by
+# SHA-256 in the app, so replacing it changes the root flow rather than the build.
+#
+# The payload step installs NDK 30.0.16138531, the compiler upstream used for the
+# payloads it validated, so a from-source build reproduces those bytes.
 #
 # Release signing uses these repository secrets. Without them the release build
 # falls back to the debug key, so the workflow still produces an installable APK:
@@ -98,13 +106,31 @@ jobs:
           else
             echo "Pinned NDK unavailable; build-native.sh will pick an installed one."
           fi
+          # The payloads are compiled with the exact NDK upstream's build scripts
+          # name, so the binaries we ship can be compared to the ones upstream
+          # validated instead of merely resembling them.
+          if "$SDKMANAGER" --install "ndk;30.0.16138531" > /dev/null 2>&1; then
+            echo "SAMSU_PAYLOAD_NDK=$SDK_ROOT/ndk/30.0.16138531" >> "$GITHUB_ENV"
+            echo "Pinned NDK 30.0.16138531 installed for the payloads."
+          else
+            echo "NDK 30 unavailable; payloads will be compiled with another NDK"
+            echo "and will not reproduce upstream's checksums."
+            echo "SAMSU_PAYLOAD_NDK=${ANDROID_NDK_HOME:-$SDK_ROOT/ndk/27.2.12479018}" >> "$GITHUB_ENV"
+          fi
 
       - name: Unit tests
         working-directory: android
         run: sh test-safety-policy.sh
 
-      - name: Compile the native payloads from source
+      - name: Compile the helper and oracle from source
         run: sh android/build-native.sh
+
+      - name: Build the three payloads from source
+        env:
+          # build-payloads.sh picks up ANDROID_NDK_HOME; the payloads need the
+          # NDK upstream used, not the one the helper and oracle are built with.
+          ANDROID_NDK_HOME: ${{ env.SAMSU_PAYLOAD_NDK }}
+        run: sh android/build-payloads.sh
 
       - name: Decode the release keystore
         if: env.KEYSTORE_B64 != ''
@@ -153,8 +179,44 @@ jobs:
           ./gradlew --no-daemon --stacktrace \
             :app:assembleDebug :app:assembleRelease \
             -PnativeFromSource=true \
+            -PpayloadDir=build/payloads \
             -PversionName='${{ steps.version.outputs.name }}' \
             -PversionCode='${{ steps.version.outputs.code }}'
+
+      - name: Verify the payloads inside the APKs are the ones built here
+        working-directory: android
+        run: |
+          # -PpayloadDir could silently fall back to prebuilt/ if the compiled
+          # files were missing, which is exactly the class of mistake this
+          # workflow exists to prevent. Compare the bytes in the APK against the
+          # files just built.
+          set -e
+          status=0
+          for apk in \
+            app/build/outputs/apk/debug/app-debug.apk \
+            app/build/outputs/apk/release/app-release.apk
+          do
+            echo "== $apk"
+            for pair in \
+              "libm3qpayload.so payload-pa1q-S931BXXUCZZI4.so" \
+              "libm3qpayload_s936b.so payload-pa2q-S936BXXUCZZI4.so" \
+              "libm3qpayload_s938b.so payload-pa3q-S938BXXUCZZI4.so"
+            do
+              lib=$(echo "$pair" | cut -d' ' -f1)
+              built="build/payloads/$(echo "$pair" | cut -d' ' -f2)"
+              want=$(sha256sum "$built" | cut -d' ' -f1)
+              got=$(unzip -p "$apk" "lib/arm64-v8a/$lib" | sha256sum | cut -d' ' -f1)
+              if [ "$want" = "$got" ]; then
+                echo "   $lib = $(basename "$built")  $want"
+              else
+                echo "   $lib DOES NOT match the payload built from source"
+                echo "     built: $want"
+                echo "     apk:   $got"
+                status=1
+              fi
+            done
+          done
+          exit "$status"
 
       - name: Verify both APKs carry all six native libraries
         working-directory: android
