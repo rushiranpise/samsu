@@ -67,6 +67,12 @@ import dev.indevelopment.m3qroot.rmg.WirelessAdbFacade;
 
 public final class MainActivity extends AppCompatActivity {
     private static final int SHIZUKU_PERMISSION_REQUEST = 0x4d33;
+    /**
+     * The Shizuku card's own permission request. Deliberately not the code above:
+     * a grant on that one starts a root run, and pressing "Start Shizuku now"
+     * must never begin kernel work.
+     */
+    private static final int SHIZUKU_PERMISSION_REQUEST_CARD = 0x4d34;
     private static final long HOLD_TO_CONFIRM_MILLIS = 1400L;
     private static final String KSU_MANAGER_PACKAGE = "me.weishu.kernelsu";
     private static final int STATUS_SUCCESS = 0xff18753c;
@@ -83,8 +89,14 @@ public final class MainActivity extends AppCompatActivity {
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean shizukuPermissionPending = new AtomicBoolean();
+    /** Keeps the launch-time request to one per process. */
+    private final AtomicBoolean shizukuPermissionAsked = new AtomicBoolean();
     private final Shizuku.OnRequestPermissionResultListener shizukuPermissionListener =
             (requestCode, grantResult) -> {
+                if (requestCode == SHIZUKU_PERMISSION_REQUEST_CARD) {
+                    ui.post(() -> onShizukuCardPermissionResult(grantResult));
+                    return;
+                }
                 if (requestCode != SHIZUKU_PERMISSION_REQUEST) return;
                 if (!shizukuPermissionPending.compareAndSet(true, false)) return;
                 ui.post(() -> {
@@ -302,6 +314,7 @@ public final class MainActivity extends AppCompatActivity {
         }
         renderWirelessAdbStatus();
         renderShizukuStatus();
+        maybeAskForShizukuPermissionOnStart();
     }
 
     private void onRunHoldAction() {
@@ -947,12 +960,87 @@ public final class MainActivity extends AppCompatActivity {
 
     private void startShizukuNow() {
         append("==== Shizuku auto-start ====");
+        setStatus("Shizuku", STATUS_WORKING);
+        setStatusDetail("Looking for a shell transport\u2026");
+
+        // A server that is already up cannot be started again, so the only thing
+        // actually missing is this app's grant. Reporting a no-op success here is
+        // what made the button look dead, so ask for the grant instead.
+        if (ShizukuShell.isRunning() && !ShizukuShell.isGranted()) {
+            append("Shizuku is already running; this app still needs the grant.");
+            requestShizukuPermission("Shizuku is already running and needs permission.");
+            renderShizukuStatus();
+            return;
+        }
+
         ShizukuStartOutcome outcome = ShizukuAutoStart.INSTANCE.startBlocking(
                 this, line -> append("  " + line));
         append(outcome.getStarted()
                 ? "Shizuku started via " + outcome.getMethod() + "."
                 : "Shizuku was not started: " + outcome.getDetail());
-        ui.post(this::renderShizukuStatus);
+
+        if (!outcome.getStarted()) {
+            setStatus("Shizuku was not started", STATUS_WARNING);
+            setStatusDetail(outcome.getDetail());
+            renderShizukuStatus();
+            return;
+        }
+        if (ShizukuShell.isRunning() && !ShizukuShell.isGranted()) {
+            requestShizukuPermission("Shizuku is running and needs permission.");
+        } else {
+            setStatus("Shizuku started", STATUS_SUCCESS);
+            setStatusDetail(outcome.getDetail());
+        }
+        renderShizukuStatus();
+    }
+
+    /**
+     * Asks for the Shizuku grant on the card's behalf and reports the request on
+     * the status card. Never starts kernel work; see
+     * {@link #SHIZUKU_PERMISSION_REQUEST_CARD}.
+     */
+    private void requestShizukuPermission(String detail) {
+        try {
+            Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_CARD);
+            setStatus("Shizuku permission required", STATUS_WORKING);
+            setStatusDetail(detail + " Approve the prompt.");
+        } catch (RuntimeException error) {
+            append("Shizuku permission request failed: " + error.getMessage());
+            setStatus("Shizuku permission required", STATUS_WARNING);
+            setStatusDetail("The permission prompt could not be shown: "
+                    + error.getMessage());
+        }
+    }
+
+    /**
+     * Shizuku is the transport this card exists to provide, so a launch that
+     * finds it running without the grant asks for it rather than leaving the card
+     * stuck on "permission not granted". Asked at most once per launch; a denial
+     * is not re-prompted in a loop.
+     */
+    private void maybeAskForShizukuPermissionOnStart() {
+        if (!ShizukuShell.isRunning() || ShizukuShell.isGranted()) return;
+        if (!shizukuPermissionAsked.compareAndSet(false, true)) return;
+        append("Shizuku is running without the app grant; asking once for permission.");
+        requestShizukuPermission("Shizuku is running and needs permission.");
+    }
+
+    /**
+     * The card asked and the user answered. Nothing is started here: the grant
+     * only makes the Shizuku transport usable, and starting the server stays the
+     * button's job.
+     */
+    private void onShizukuCardPermissionResult(int grantResult) {
+        if (grantResult == PackageManager.PERMISSION_GRANTED) {
+            append("Shizuku shell permission granted.");
+            setStatus("Shizuku ready", STATUS_SUCCESS);
+            setStatusDetail("Shizuku is running with permission and can carry a root run.");
+        } else {
+            append("Shizuku permission denied.");
+            setStatus("Shizuku permission required", STATUS_WARNING);
+            setStatusDetail("Without the grant Shizuku cannot carry a root run.");
+        }
+        renderShizukuStatus();
     }
 
     /**
