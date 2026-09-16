@@ -1,21 +1,26 @@
 name: Build APK
 
-# Builds both APKs from source and attaches them to a GitHub release.
+# Builds both APKs and attaches them to a GitHub release.
 #
-# Five of the six native libraries the app loads are compiled here rather than
-# trusted from the committed prebuilts:
+# Native provenance, per library:
 #
-#   android/build-native.sh    helper + oracle, from exploit/
-#   android/build-payloads.sh  the three per-model payloads, from the Root My
-#                              Galaxy Payloads tree at a pinned commit
+#   helper, oracle   compiled here from exploit/ (android/build-native.sh)
+#   the three         the binaries upstream validated, packaged from
+#   payloads          android/prebuilt/ unless a run opts into the source build
+#   ksud              always from android/prebuilt/: published as a versioned
+#                     artifact and pinned by SHA-256 in the app
 #
-# The APKs are assembled with -PnativeFromSource=true -PpayloadDir=build/payloads,
-# so nothing is packaged from android/prebuilt/ except ksud: that one is a
-# KernelSU late-load daemon published as a versioned artifact and pinned by
-# SHA-256 in the app, so replacing it changes the root flow rather than the build.
+# The payloads deserve the note. android/build-payloads.sh always runs, so every
+# build compiles all three from the Root My Galaxy Payloads source and prints
+# whether they still match the packaged binaries. They do not, today, and not
+# for a toolchain reason: the published source compiles a different variant
+# (tracefs/phys-alias route, ported for KernelSU 3.3.0) than the
+# physical-p0-oracle binaries this app ships and upstream tested against the
+# 3.2.5 daemon it pins. Packaging source builds is therefore a change of exploit
+# route, so it is opt-in via the payloads input rather than the default.
 #
-# The payload step installs NDK 30.0.16138531, the compiler upstream used for the
-# payloads it validated, so a from-source build reproduces those bytes.
+# The step installs NDK 30.0.16138531, the compiler upstream's build scripts name,
+# so the comparison is about source and not about which clang ran.
 #
 # Release signing uses these repository secrets. Without them the release build
 # falls back to the debug key, so the workflow still produces an installable APK:
@@ -42,6 +47,14 @@ on:
         required: false
         type: boolean
         default: false
+      payloads:
+        description: 'Which payloads to package: upstream-validated or built here from source'
+        required: false
+        type: choice
+        options:
+          - validated
+          - source
+        default: validated
 
 permissions:
   contents: write
@@ -128,9 +141,15 @@ jobs:
       - name: Build the three payloads from source
         env:
           # build-payloads.sh picks up ANDROID_NDK_HOME; the payloads need the
-          # NDK upstream used, not the one the helper and oracle are built with.
+          # NDK upstream's scripts name, not the one the helper and oracle use.
           ANDROID_NDK_HOME: ${{ env.SAMSU_PAYLOAD_NDK }}
-        run: sh android/build-payloads.sh
+        run: |
+          # Compiled on every run, whether or not the result is packaged: the
+          # comparison it prints is the only thing that would tell us the
+          # published source had caught up with the binaries we ship.
+          sh android/build-payloads.sh | tee payload-build.txt
+          echo '### Payloads built from source' >> "$GITHUB_STEP_SUMMARY"
+          sed -n '/^target /,$p' payload-build.txt >> "$GITHUB_STEP_SUMMARY" || true
 
       - name: Decode the release keystore
         if: env.KEYSTORE_B64 != ''
@@ -175,23 +194,36 @@ jobs:
 
       - name: Assemble debug and release from source
         working-directory: android
+        env:
+          PAYLOADS: ${{ inputs.payloads || 'validated' }}
         run: |
+          set -e
+          payload_flag=''
+          if [ "$PAYLOADS" = 'source' ]; then
+            payload_flag='-PpayloadDir=build/payloads'
+            echo "Packaging the payloads compiled from source."
+          else
+            echo "Packaging the upstream-validated payloads from prebuilt/."
+          fi
           ./gradlew --no-daemon --stacktrace \
             :app:assembleDebug :app:assembleRelease \
             -PnativeFromSource=true \
-            -PpayloadDir=build/payloads \
+            $payload_flag \
             -PversionName='${{ steps.version.outputs.name }}' \
             -PversionCode='${{ steps.version.outputs.code }}'
 
-      - name: Verify the payloads inside the APKs are the ones built here
+      - name: Verify the APKs carry the intended payloads
         working-directory: android
+        env:
+          PAYLOADS: ${{ inputs.payloads || 'validated' }}
         run: |
-          # -PpayloadDir could silently fall back to prebuilt/ if the compiled
-          # files were missing, which is exactly the class of mistake this
-          # workflow exists to prevent. Compare the bytes in the APK against the
-          # files just built.
+          # A packaging property can silently fall through to the wrong source -
+          # exactly the class of mistake this workflow exists to catch - so
+          # compare the bytes in the APK against the intended files.
           set -e
           status=0
+          if [ "$PAYLOADS" = 'source' ]; then expected=build/payloads; else expected=prebuilt; fi
+          echo "Expecting payloads from $expected"
           for apk in \
             app/build/outputs/apk/debug/app-debug.apk \
             app/build/outputs/apk/release/app-release.apk
@@ -203,15 +235,15 @@ jobs:
               "libm3qpayload_s938b.so payload-pa3q-S938BXXUCZZI4.so"
             do
               lib=$(echo "$pair" | cut -d' ' -f1)
-              built="build/payloads/$(echo "$pair" | cut -d' ' -f2)"
-              want=$(sha256sum "$built" | cut -d' ' -f1)
+              want_file="$expected/$(echo "$pair" | cut -d' ' -f2)"
+              want=$(sha256sum "$want_file" | cut -d' ' -f1)
               got=$(unzip -p "$apk" "lib/arm64-v8a/$lib" | sha256sum | cut -d' ' -f1)
               if [ "$want" = "$got" ]; then
-                echo "   $lib = $(basename "$built")  $want"
+                echo "   $lib = $(basename "$want_file")  $want"
               else
-                echo "   $lib DOES NOT match the payload built from source"
-                echo "     built: $want"
-                echo "     apk:   $got"
+                echo "   $lib does not match $want_file"
+                echo "     expected: $want"
+                echo "     apk:      $got"
                 status=1
               fi
             done

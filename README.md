@@ -75,28 +75,47 @@ Android SDK 37, and an Android NDK.
 # native: the helper and the KASLR oracle, from exploit/
 sh android/build-native.sh
 
-# native: the three per-model payloads, compiled from the Root My Galaxy Payloads
-# tree at the commit pinned inside the script
-sh android/build-payloads.sh
+cd android
+./gradlew --no-daemon :app:assembleRelease -PnativeFromSource=true
+```
 
+APK output: `android/app/build/outputs/apk/release/app-release.apk`. Without
+`-PnativeFromSource=true` the committed helper and oracle are packaged instead, so
+an ordinary assemble needs neither NDK nor network.
+
+### Payload provenance
+
+The three bundled payloads are the binaries upstream validated on hardware, kept
+in `android/prebuilt/`. `android/build-payloads.sh` compiles them from the Root My
+Galaxy Payloads source at the commit pinned inside the script, and CI runs it on
+every build so the packaged set is compared against the published source rather
+than trusted.
+
+They do not match today, and not because of the compiler. NDK 30.0.16138531 - the
+one upstream's own build scripts name - still produces different bytes, because
+the published source compiles a different variant: `tracefs-physalias` (a
+tracefs slide route with phys-alias data addressing, 8-shot fops retries, ported
+for KernelSU 3.3.0), where the packaged binaries are the `physical-p0-oracle`
+variant validated with the KernelSU 3.2.5 daemon this app pins. Packaging a source
+build is therefore a change of exploit route rather than a build detail, so it is
+opt-in:
+
+```sh
+sh android/build-payloads.sh
 cd android
 ./gradlew --no-daemon :app:assembleRelease \
   -PnativeFromSource=true -PpayloadDir=build/payloads
 ```
 
-APK output: `android/app/build/outputs/apk/release/app-release.apk`.
+`ksud` has no source here at all: it is a KernelSU late-load daemon published as a
+versioned artifact and pinned by SHA-256 in the engine, so replacing it changes
+the root flow, not just the build.
 
-Without those two properties the build falls back to the binaries committed in
-`android/prebuilt/`, so a plain assemble needs no NDK and no network. `ksud` is
-always taken from there: it is a KernelSU late-load daemon published as a
-versioned artifact and pinned by SHA-256 in the engine, so replacing it is a
-change to the root flow rather than a build detail.
-
-[`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) runs the
-from-source path on every tagged commit and publishes both APKs as a GitHub
-release; a manual run publishes too when `publish` is checked. It installs NDK
-30.0.16138531 for the payloads because that is what upstream compiled them with,
-so the binaries it ships can be compared against the ones upstream validated.
+[`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) is the
+release path. It assembles both APKs, verifies every native library, publishes
+them on a tag (or a manual run with `publish` checked), and takes a `payloads`
+input selecting the validated or the source-built payload set, defaulting to the
+validated one.
 
 ## Repository layout
 
