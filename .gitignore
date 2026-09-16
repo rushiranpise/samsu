@@ -15,6 +15,10 @@
 # Native build outputs
 exploit/build/
 
+# Signing material. The *.jks rule above does not cover keystore.properties,
+# which holds the store and key passwords in plain text.
+android/keystore/
+
 # Android/Gradle outputs
 android/.gradle/
 android/.idea/
