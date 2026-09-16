@@ -72,44 +72,43 @@ Requirements: JDK 17 (JDK 21 or newer for release builds, whose lint task needs 
 Android SDK 37, and an Android NDK.
 
 ```sh
-# native: the helper and the KASLR oracle, from exploit/
-sh android/build-native.sh
-
 cd android
-./gradlew --no-daemon :app:assembleRelease -PnativeFromSource=true
+./gradlew --no-daemon :app:assembleRelease
 ```
 
-APK output: `android/app/build/outputs/apk/release/app-release.apk`. Without
-`-PnativeFromSource=true` the committed helper and oracle are packaged instead, so
-an ordinary assemble needs neither NDK nor network.
+APK output: `android/app/build/outputs/apk/release/app-release.apk`. No NDK and no
+network are needed: all six native libraries are packaged from `android/prebuilt/`.
 
-### Payload provenance
+Signing comes from `SAMSU_KEYSTORE_FILE` / `SAMSU_KEYSTORE_PASSWORD` /
+`SAMSU_KEY_ALIAS` / `SAMSU_KEY_PASSWORD`, or from `android/keystore/keystore.properties`
+when those are unset. With neither, a release build is signed with the debug key
+and cannot install over a published one.
 
-The three bundled payloads are the binaries upstream validated on hardware, kept
-in `android/prebuilt/`. `android/build-payloads.sh` compiles them from the Root My
-Galaxy Payloads source at the commit pinned inside the script, and CI runs it on
-every build so the packaged set is compared against the published source rather
-than trusted.
+### Native provenance
 
-They do not match today, and not because of the compiler. NDK 30.0.16138531 - the
-one upstream's own build scripts name - still produces different bytes, because
-the published source compiles a different variant: `tracefs-physalias` (a
-tracefs slide route with phys-alias data addressing, 8-shot fops retries, ported
-for KernelSU 3.3.0), where the packaged binaries are the `physical-p0-oracle`
-variant validated with the KernelSU 3.2.5 daemon this app pins. Packaging a source
-build is therefore a change of exploit route rather than a build detail, so it is
-opt-in:
+The six libraries the engine loads are the binaries upstream validated on
+hardware, and `android/app/build.gradle` pins each one's SHA-256, so replacing one
+without saying so fails the build rather than reaching a phone.
 
-```sh
-sh android/build-payloads.sh
-cd android
-./gradlew --no-daemon :app:assembleRelease \
-  -PnativeFromSource=true -PpayloadDir=build/payloads
-```
+The from-source builds still exist, as checks and as explicit overrides:
 
-`ksud` has no source here at all: it is a KernelSU late-load daemon published as a
-versioned artifact and pinned by SHA-256 in the engine, so replacing it changes
-the root flow, not just the build.
+- `android/build-native.sh` compiles `exploit/`, and its helper is *not* a
+  substitute for the packaged one. The engine calls the helper with four arguments
+  (`--run-payload <payload> <root-helper> <log>`); `exploit/src/su_daemon.c`
+  accepts three and exits 2 on the fourth. That is how a from-source helper once
+  shipped and failed every root run before the kernel was touched. Override with
+  `-PnativeFromSource=true` only if the source grows the missing argument.
+- `android/build-payloads.sh` compiles the three payloads from the Root My Galaxy
+  Payloads source at the commit pinned inside the script. They do not match the
+  packaged ones today, and not because of the compiler: NDK 30.0.16138531, the one
+  upstream's own build scripts name, still produces different bytes, because the
+  published source is a different variant. It builds `tracefs-physalias` (tracefs
+  slide route, phys-alias data addressing, 8-shot fops retries, ported for
+  KernelSU 3.3.0), where the packaged payloads are the `physical-p0-oracle`
+  variant validated with the KernelSU 3.2.5 daemon the engine pins. Packaging a
+  source build is a change of exploit route, so it takes `-PpayloadDir=build/payloads`.
+- `ksud` has no source here at all: it is a KernelSU late-load daemon published as
+  a versioned artifact and pinned by SHA-256 in the engine.
 
 [`.github/workflows/build-apk.yml`](.github/workflows/build-apk.yml) is the
 release path. It assembles both APKs, verifies every native library, publishes

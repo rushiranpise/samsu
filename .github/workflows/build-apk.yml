@@ -2,13 +2,23 @@ name: Build APK
 
 # Builds both APKs and attaches them to a GitHub release.
 #
-# Native provenance, per library:
+# All six native libraries are packaged from android/prebuilt/, which holds the
+# binaries upstream validated on hardware, and android/app/build.gradle pins their
+# SHA-256 so an unnoticed swap fails the build instead of reaching a phone.
 #
-#   helper, oracle   compiled here from exploit/ (android/build-native.sh)
-#   the three         the binaries upstream validated, packaged from
-#   payloads          android/prebuilt/ unless a run opts into the source build
-#   ksud              always from android/prebuilt/: published as a versioned
-#                     artifact and pinned by SHA-256 in the app
+# The from-source builds still run here, as checks rather than as inputs:
+#
+#   exploit/          compiles (build-native.sh), but its su_daemon does not
+#                     implement the interface this app calls, and the vendored
+#                     oracle source carries the S26 Ultra target
+#   Root My Galaxy    compiles all three payloads (build-payloads.sh) from a
+#   Payloads          different variant than the packaged ones - see below
+#
+# Payloads, specifically: the published source compiles the tracefs-physalias
+# variant (phys-alias data addressing, 8-shot fops retries, ported for KernelSU
+# 3.3.0), while the packaged binaries are the physical-p0-oracle variant
+# validated with the 3.2.5 daemon the engine pins. Packaging them is a change of
+# exploit route, so it stays opt-in via the payloads input.
 #
 # The payloads deserve the note. android/build-payloads.sh always runs, so every
 # build compiles all three from the Root My Galaxy Payloads source and prints
@@ -135,8 +145,14 @@ jobs:
         working-directory: android
         run: sh test-safety-policy.sh
 
-      - name: Compile the helper and oracle from source
-        run: sh android/build-native.sh
+      - name: Compile the exploit sources (build check)
+        run: |
+          # Kept as a check: it catches rot in exploit/ and builds the payload for
+          # the ported target. Its outputs are not packaged - the app calls
+          # libm3qroot.so with four arguments (--run-payload <payload> <helper>
+          # <log>) while this su_daemon accepts three and exits 2 on the fourth,
+          # which is how a from-source helper once shipped and failed every run.
+          sh android/build-native.sh
 
       - name: Build the three payloads from source
         env:
@@ -192,7 +208,7 @@ jobs:
           echo "code=${CODE}" >> "$GITHUB_OUTPUT"
           echo "Stamping versionName=${NAME} versionCode=${CODE}"
 
-      - name: Assemble debug and release from source
+      - name: Assemble debug and release
         working-directory: android
         env:
           PAYLOADS: ${{ inputs.payloads || 'validated' }}
@@ -207,7 +223,6 @@ jobs:
           fi
           ./gradlew --no-daemon --stacktrace \
             :app:assembleDebug :app:assembleRelease \
-            -PnativeFromSource=true \
             $payload_flag \
             -PversionName='${{ steps.version.outputs.name }}' \
             -PversionCode='${{ steps.version.outputs.code }}'

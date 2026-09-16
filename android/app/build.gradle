@@ -5,19 +5,21 @@ plugins {
 /*
  * Where the helper and oracle come from.
  *
- * Committed prebuilts by default, so an ordinary build needs no NDK. CI runs
- * android/build-native.sh and passes -PnativeFromSource=true, so a released APK
- * is compiled from exploit/ instead of trusting a binary committed months
- * earlier.
+ * The committed prebuilts, which are the binaries upstream validated on
+ * hardware, so an ordinary build needs no NDK. -PnativeFromSource=true builds
+ * them from exploit/ instead - and that is an override to reach for knowingly:
+ * the engine calls the helper with four arguments
+ * (--run-payload <payload> <root-helper> <log>), while exploit/src/su_daemon.c
+ * accepts three and exits 2 on the fourth. A from-source helper shipped once and
+ * failed every root run before the kernel was touched.
  *
- * The three per-model payloads are compiled by android/build-payloads.sh from
- * the Root My Galaxy Payloads source; CI passes -PpayloadDir to package those
- * builds, while a plain build falls back to the copies in prebuilt/.
+ * The three per-model payloads are compiled by android/build-payloads.sh from the
+ * Root My Galaxy Payloads source; -PpayloadDir packages those builds. That is
+ * also an override: the published source compiles a different exploit variant
+ * than the payloads here - see the build-payloads.sh header.
  *
- * ksud is the one remaining binary with no buildable source here: it is a
- * KernelSU late-load daemon published as a versioned artifact, and the engine
- * pins its SHA-256, so replacing it is a change to the root flow rather than a
- * build detail.
+ * ksud has no source here either: it is a KernelSU late-load daemon published as
+ * a versioned artifact and pinned by SHA-256 in the engine.
  */
 def nativeFromSource = providers.gradleProperty('nativeFromSource')
         .map { it.toBoolean() }
@@ -43,6 +45,40 @@ def payloadDir = providers.gradleProperty('payloadDir')
 def payloadFile = { name -> new File(payloadDir, name) }
 
 def jniOut = file('src/main/jniLibs/arm64-v8a')
+
+/*
+ * SHA-256 of the binaries upstream validated, so that swapping one has to be a
+ * deliberate act. verifyM3qNativeInputs compares the packaged file against these
+ * unless the matching override above says the build is intentionally replacing
+ * it; the payload hashes are the same three android/build-payloads.sh reports as
+ * "upstream".
+ */
+def validatedHashes = [
+        'libm3qroot.so'         : 'a9053c42c53cc31e0b4ceafe9e7c34acfc1020fc0d6da9500c58382c287f3f04',
+        'libm3qoracle.so'       : '0ba893383321f94c594ddfac6e14711c985c8a7a7286e5ccd4e5184de882d41a',
+        'libm3qpayload.so'      : 'f6158d21ea432c8b7a258bf991f87ef30367fac628fc56fffc883e0757ef28a7',
+        'libm3qpayload_s936b.so': '28b739b01f4e67aed7b17bfafb27cc72c3bc1a7d9eac4d41834d99a3d10e9a28',
+        'libm3qpayload_s938b.so': 'e41a2073cba1b4e5da8df19716943681dff9a8a49455f9faed48bf82909f8e20',
+        'libm3qksud.so'         : '1e1cb6b861d0d4951b7374c12404eee1fb4c02a77240e0500ca571a302396374',
+]
+def overriddenLibs = [] as Set<String>
+if (nativeFromSource) {
+    overriddenLibs.addAll(['libm3qroot.so', 'libm3qoracle.so'])
+}
+if (providers.gradleProperty('payloadDir').isPresent()) {
+    overriddenLibs.addAll(['libm3qpayload.so', 'libm3qpayload_s936b.so', 'libm3qpayload_s938b.so'])
+}
+def sha256Of = { File file ->
+    def digest = java.security.MessageDigest.getInstance('SHA-256')
+    file.withInputStream { stream ->
+        byte[] buffer = new byte[8192]
+        int read
+        while ((read = stream.read(buffer)) > 0) {
+            digest.update(buffer, 0, read)
+        }
+    }
+    digest.digest().collect { String.format('%02x', it) }.join()
+}
 
 /*
  * The six libraries the engine loads, all from committed prebuilts, so building
@@ -109,6 +145,30 @@ tasks.register('verifyM3qNativeInputs') {
                         '\n  (for the payloads: run android/build-payloads.sh and pass' +
                         " -PpayloadDir=build/payloads, or drop that property to use prebuilt/)")
     }
+
+    doLast {
+        def drifted = required.findAll { entry ->
+            !overriddenLibs.contains(entry[1]) && sha256Of(entry[0]) != validatedHashes[entry[1]]
+        }
+        if (drifted.isEmpty()) {
+            return
+        }
+        def report = drifted.collect { entry ->
+            "  ${entry[1]}\n" +
+                    "    packaged:  ${sha256Of(entry[0])}\n" +
+                    "    validated: ${validatedHashes[entry[1]]}\n" +
+                    "    from:      ${entry[0]}"
+        }.join('\n')
+        throw new GradleException(
+                'Refusing to package a native library that is not the validated binary.\n' +
+                        'These are the binaries upstream shipped and tested on hardware:\n' +
+                        report + '\n' +
+                        'If this is deliberate, override the set explicitly:\n' +
+                        '  -PnativeFromSource=true        helper and oracle from exploit/\n' +
+                        '  -PpayloadDir=build/payloads    payloads from the RMG source\n' +
+                        'Note that the from-source helper does not implement the interface the\n' +
+                        'engine calls, and the published payload source is a different variant.')
+    }
 }
 
 android {
@@ -156,20 +216,42 @@ android {
                 new File(project.projectDir, raw),
         ].find { it.isFile() }
     }
-    def keystoreFile = resolveKeystore(System.getenv('SAMSU_KEYSTORE_FILE'))
-    def releaseKeyReady = keystoreFile != null &&
-            System.getenv('SAMSU_KEYSTORE_PASSWORD') &&
-            System.getenv('SAMSU_KEY_ALIAS') &&
-            System.getenv('SAMSU_KEY_PASSWORD')
+    /*
+     * The same four settings can come from keystore/keystore.properties, which
+     * android/keystore/ holds on a developer machine and .gitignore keeps out of
+     * history. Without this the file sat there unread, so a local
+     * assembleRelease fell back to the debug key and produced an APK that could
+     * not install over a published one - "signatures do not match". CI keeps
+     * using secrets: environment variables win over the file.
+     */
+    def keystoreProperties = new Properties()
+    def keystorePropertiesFile = rootProject.file('keystore/keystore.properties')
+    if (keystorePropertiesFile.isFile()) {
+        keystorePropertiesFile.withInputStream { keystoreProperties.load(it) }
+    }
+    def signingSetting = { String envName, String propertyName ->
+        System.getenv(envName) ?: keystoreProperties.getProperty(propertyName)
+    }
+
+    def keystoreFile = resolveKeystore(signingSetting('SAMSU_KEYSTORE_FILE', 'storeFile'))
+    def keystorePassword = signingSetting('SAMSU_KEYSTORE_PASSWORD', 'storePassword')
+    def keyAliasName = signingSetting('SAMSU_KEY_ALIAS', 'keyAlias')
+    def keyPasswordValue = signingSetting('SAMSU_KEY_PASSWORD', 'keyPassword')
+    def releaseKeyReady = keystoreFile != null && keystorePassword && keyAliasName && keyPasswordValue
     if (releaseKeyReady) {
         signingConfigs {
             release {
                 storeFile keystoreFile
-                storePassword System.getenv('SAMSU_KEYSTORE_PASSWORD')
-                keyAlias System.getenv('SAMSU_KEY_ALIAS')
-                keyPassword System.getenv('SAMSU_KEY_PASSWORD')
+                storePassword keystorePassword
+                keyAlias keyAliasName
+                keyPassword keyPasswordValue
             }
         }
+    } else if (keystorePropertiesFile.isFile()) {
+        // The file is there but did not resolve to a usable key: say so, because
+        // the alternative is shipping a debug-signed APK that looks like a release.
+        logger.warn('keystore.properties was found but did not yield a usable key; ' +
+                'the release APK will be signed with the debug key.')
     }
 
     buildTypes {
