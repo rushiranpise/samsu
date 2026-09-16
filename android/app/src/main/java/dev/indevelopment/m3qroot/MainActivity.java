@@ -54,6 +54,9 @@ import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
 import dev.indevelopment.m3qroot.rmg.RunResult;
 import dev.indevelopment.m3qroot.rmg.UpdateInfo;
 import dev.indevelopment.m3qroot.rmg.AdbTestOutcome;
+import dev.indevelopment.m3qroot.AutoRootSession;
+import dev.indevelopment.m3qroot.rmg.AutoRootOutcome;
+import dev.indevelopment.m3qroot.rmg.AutoRoot;
 import dev.indevelopment.m3qroot.rmg.AutomationPrefs;
 import dev.indevelopment.m3qroot.rmg.PostRootAutomation;
 import dev.indevelopment.m3qroot.rmg.PostRootOutcome;
@@ -120,6 +123,8 @@ public final class MainActivity extends AppCompatActivity {
     private MaterialButton shizukuBootButton;
     private MaterialButton shizukuAfterRootButton;
     private MaterialButton softRebootAfterRootButton;
+    private TextView autoRootStatus;
+    private MaterialButton autoRootToggleButton;
     private boolean diagnosticsVisible;
     private boolean runIsReboot;
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
@@ -218,6 +223,8 @@ public final class MainActivity extends AppCompatActivity {
         shizukuBootButton = findViewById(R.id.shizuku_boot);
         shizukuAfterRootButton = findViewById(R.id.shizuku_after_root);
         softRebootAfterRootButton = findViewById(R.id.soft_reboot_after_root);
+        autoRootStatus = findViewById(R.id.autoroot_status);
+        autoRootToggleButton = findViewById(R.id.autoroot_toggle);
     }
 
     private static String deviceMarketingLabel() {
@@ -269,6 +276,9 @@ public final class MainActivity extends AppCompatActivity {
         shizukuBootButton.setOnClickListener(v -> toggleShizukuOnBoot());
         shizukuAfterRootButton.setOnClickListener(v -> toggleShizukuAfterRoot());
         softRebootAfterRootButton.setOnClickListener(v -> toggleSoftRebootAfterRoot());
+        autoRootToggleButton.setOnClickListener(v -> toggleAutoRoot());
+        findViewById(R.id.autoroot_run_now).setOnClickListener(
+                v -> worker.execute(this::runAutoRootNow));
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
         findViewById(R.id.export_history).setOnClickListener(
                 v -> worker.execute(this::exportRunHistory));
@@ -814,6 +824,53 @@ public final class MainActivity extends AppCompatActivity {
         shizukuBootButton.setText(ShizukuPrefs.INSTANCE.startOnBoot(this)
                 ? R.string.shizuku_boot_on : R.string.shizuku_boot_off);
         renderPostRootToggles();
+        renderAutoRootStatus();
+    }
+
+    /* ---- unattended root --------------------------------------------- */
+
+    private void renderAutoRootStatus() {
+        boolean enabled = AutoRoot.INSTANCE.isEnabled(this);
+        autoRootToggleButton.setText(enabled
+                ? R.string.autoroot_on : R.string.autoroot_off);
+        String last = AutomationPrefs.INSTANCE.lastAutoRootResult(this);
+        autoRootStatus.setText(getString(R.string.autoroot_status_format,
+                last.isEmpty() ? getString(R.string.autoroot_status_idle) : last));
+    }
+
+    private void toggleAutoRoot() {
+        boolean enabled = !AutoRoot.INSTANCE.isEnabled(this);
+        AutoRoot.INSTANCE.setEnabled(this, enabled);
+        append(enabled
+                ? "Auto root is armed. At the next boot it runs only if these exact "
+                        + "artifacts were already verified on this firmware."
+                : "Auto root disabled.");
+        renderAutoRootStatus();
+    }
+
+    /** Manual trigger, so the same gates can be exercised without a reboot. */
+    private void runAutoRootNow() {
+        append("==== Auto Root (manual trigger) ====");
+        beginRunHistory("Auto root (manual)");
+        boolean rooted = false;
+        try {
+            AutoRootSession session = AutoRootSession.create(this,
+                    line -> append("  " + line));
+            AutoRootOutcome outcome = AutoRoot.INSTANCE.runBlocking(
+                    this,
+                    session,
+                    line -> append("  " + line),
+                    progress -> ui.post(
+                            () -> setStatusDetail("Auto root: " + progress)));
+            rooted = outcome.getRooted();
+            append("Auto Root: " + outcome.getDetail());
+        } catch (Exception error) {
+            append("Auto Root failed: " + error.getMessage());
+        } finally {
+            finishRunHistory(rooted ? RunResult.Succeeded : RunResult.Failed);
+        }
+        ui.post(this::renderAutoRootStatus);
+        worker.execute(this::refreshRootState);
     }
 
     /* ---- post-root automation ---------------------------------------- */

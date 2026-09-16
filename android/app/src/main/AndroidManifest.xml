@@ -58,6 +58,21 @@
             </intent-filter>
         </receiver>
         <service
+            android:name="dev.indevelopment.m3qroot.rmg.AutoRootService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Unattended root requested by the user at boot" />
+        </service>
+        <receiver
+            android:name="dev.indevelopment.m3qroot.rmg.AutoRootBootReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+        <service
             android:name="dev.indevelopment.m3qroot.rmg.AdbPairingService"
             android:exported="false"
             android:foregroundServiceType="specialUse">

@@ -56,6 +56,21 @@
     <string name="shizuku_last_result_started">last attempt: started via %1$s</string>
     <string name="shizuku_last_result_failed">last attempt failed: %1$s</string>
     <string name="shizuku_last_result_blocked">last attempt: the system refused the background start</string>
+    <!-- Unattended root at boot, adapted from Root-My-Galaxy-Extended. -->
+    <string name="autoroot_section_title">Auto root</string>
+    <string name="autoroot_section_description">Root automatically after a reboot, once these exact payloads have been verified on this firmware. Refuses to run on a build that has never rooted.</string>
+    <string name="autoroot_on">Auto root on boot: on</string>
+    <string name="autoroot_off">Auto root on boot: off</string>
+    <string name="autoroot_run_now">Run Auto Root now</string>
+    <string name="autoroot_status_format">Auto root: %1$s</string>
+    <string name="autoroot_status_idle">off</string>
+    <string name="autoroot_notification_channel">Auto root</string>
+    <string name="autoroot_notification_title">Auto root</string>
+    <string name="autoroot_notification_starting">Checking whether this build may run unattended…</string>
+    <string name="autoroot_last_result_rooted">rooted \u00b7 %1$s</string>
+    <string name="autoroot_last_result_ran_not_rooted">ran but did not root \u00b7 %1$s</string>
+    <string name="autoroot_last_result_skipped">skipped \u00b7 %1$s</string>
+    <string name="autoroot_last_result_blocked">the system refused the background start</string>
     <string name="adb_section_title">Wireless ADB</string>
     <string name="adb_section_description">Pair once with this device\u2019s own Wireless Debugging to get a shell transport without a PC.</string>
     <string name="adb_pair_action">Pair wireless ADB</string>
