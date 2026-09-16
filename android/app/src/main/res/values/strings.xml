@@ -41,6 +41,10 @@
     <string name="shizuku_section_title">Shizuku</string>
     <string name="shizuku_section_description">Start Shizuku automatically after a reboot, using the KernelSU root shell when it exists and the paired local ADB shell otherwise.</string>
     <string name="shizuku_start_now">Start Shizuku now</string>
+    <string name="shizuku_after_root_on">Start Shizuku after root: on</string>
+    <string name="shizuku_after_root_off">Start Shizuku after root: off</string>
+    <string name="soft_reboot_after_root_on">Soft reboot after root: on</string>
+    <string name="soft_reboot_after_root_off">Soft reboot after root: off</string>
     <string name="shizuku_boot_on">Start on boot: on</string>
     <string name="shizuku_boot_off">Start on boot: off</string>
     <string name="shizuku_status_format">Shizuku: %1$s</string>

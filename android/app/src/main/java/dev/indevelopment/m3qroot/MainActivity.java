@@ -54,6 +54,9 @@ import dev.indevelopment.m3qroot.rmg.RunHistoryStore;
 import dev.indevelopment.m3qroot.rmg.RunResult;
 import dev.indevelopment.m3qroot.rmg.UpdateInfo;
 import dev.indevelopment.m3qroot.rmg.AdbTestOutcome;
+import dev.indevelopment.m3qroot.rmg.AutomationPrefs;
+import dev.indevelopment.m3qroot.rmg.PostRootAutomation;
+import dev.indevelopment.m3qroot.rmg.PostRootOutcome;
 import dev.indevelopment.m3qroot.rmg.ShizukuAutoStart;
 import dev.indevelopment.m3qroot.rmg.ShizukuPrefs;
 import dev.indevelopment.m3qroot.rmg.ShizukuStartOutcome;
@@ -115,6 +118,8 @@ public final class MainActivity extends AppCompatActivity {
     private MaterialButton adbPairButton;
     private TextView shizukuStatus;
     private MaterialButton shizukuBootButton;
+    private MaterialButton shizukuAfterRootButton;
+    private MaterialButton softRebootAfterRootButton;
     private boolean diagnosticsVisible;
     private boolean runIsReboot;
     private volatile String activePayloadId = PayloadStore.BUNDLED_PAYLOAD_ID;
@@ -211,6 +216,8 @@ public final class MainActivity extends AppCompatActivity {
         adbPairButton = findViewById(R.id.adb_pair);
         shizukuStatus = findViewById(R.id.shizuku_status);
         shizukuBootButton = findViewById(R.id.shizuku_boot);
+        shizukuAfterRootButton = findViewById(R.id.shizuku_after_root);
+        softRebootAfterRootButton = findViewById(R.id.soft_reboot_after_root);
     }
 
     private static String deviceMarketingLabel() {
@@ -260,6 +267,8 @@ public final class MainActivity extends AppCompatActivity {
         findViewById(R.id.shizuku_start).setOnClickListener(
                 v -> worker.execute(this::startShizukuNow));
         shizukuBootButton.setOnClickListener(v -> toggleShizukuOnBoot());
+        shizukuAfterRootButton.setOnClickListener(v -> toggleShizukuAfterRoot());
+        softRebootAfterRootButton.setOnClickListener(v -> toggleSoftRebootAfterRoot());
         findViewById(R.id.export_log).setOnClickListener(v -> exportLastLog());
         findViewById(R.id.export_history).setOnClickListener(
                 v -> worker.execute(this::exportRunHistory));
@@ -804,6 +813,61 @@ public final class MainActivity extends AppCompatActivity {
         shizukuStatus.setText(getString(R.string.shizuku_status_format, state));
         shizukuBootButton.setText(ShizukuPrefs.INSTANCE.startOnBoot(this)
                 ? R.string.shizuku_boot_on : R.string.shizuku_boot_off);
+        renderPostRootToggles();
+    }
+
+    /* ---- post-root automation ---------------------------------------- */
+
+    private void renderPostRootToggles() {
+        shizukuAfterRootButton.setText(
+                AutomationPrefs.INSTANCE.startShizukuAfterRoot(this)
+                        ? R.string.shizuku_after_root_on
+                        : R.string.shizuku_after_root_off);
+        softRebootAfterRootButton.setText(
+                AutomationPrefs.INSTANCE.softRebootAfterRoot(this)
+                        ? R.string.soft_reboot_after_root_on
+                        : R.string.soft_reboot_after_root_off);
+    }
+
+    private void toggleShizukuAfterRoot() {
+        boolean enabled = !AutomationPrefs.INSTANCE.startShizukuAfterRoot(this);
+        AutomationPrefs.INSTANCE.setStartShizukuAfterRoot(this, enabled);
+        append(enabled
+                ? "Shizuku will be started automatically after a verified root run."
+                : "Shizuku post-root start disabled.");
+        renderPostRootToggles();
+    }
+
+    private void toggleSoftRebootAfterRoot() {
+        boolean enabled = !AutomationPrefs.INSTANCE.softRebootAfterRoot(this);
+        AutomationPrefs.INSTANCE.setSoftRebootAfterRoot(this, enabled);
+        append(enabled
+                ? "A userspace reboot will run automatically after a verified root run "
+                        + "(KernelSU soft-reboot first, zygote restart as fallback)."
+                : "Post-root soft reboot disabled.");
+        renderPostRootToggles();
+    }
+
+    /**
+     * The sequence the README asks for by hand, run only after KernelSU is
+     * verified. A successful reboot ends this process, which is why the step is
+     * confirmed by an acceptance marker rather than by an exit code.
+     */
+    private void runPostRootAutomation() {
+        if (!PostRootAutomation.INSTANCE.isConfigured(this)) return;
+        beginRunHistory("Post-root automation");
+        boolean accepted = false;
+        try {
+            PostRootOutcome outcome = PostRootAutomation.INSTANCE.runBlocking(
+                    this, line -> append("  " + line));
+            append("Post-root automation: " + outcome.getDetail());
+            accepted = outcome.getShizukuStarted() || outcome.getSoftRebootRequested();
+        } catch (Exception error) {
+            append("Post-root automation failed: " + error.getMessage());
+        } finally {
+            finishRunHistory(accepted ? RunResult.Succeeded : RunResult.Failed);
+        }
+        ui.post(this::renderShizukuStatus);
     }
 
     private void toggleShizukuOnBoot() {
@@ -1470,6 +1534,7 @@ public final class MainActivity extends AppCompatActivity {
                 grantSecureSettingsIfPossible();
                 openPackage(KSU_MANAGER_PACKAGE,
                         "Grant SU to SamSU and refresh.");
+                worker.execute(this::runPostRootAutomation);
             } else if (state.bootstrap()) {
                 run.setVisibility(View.VISIBLE);
                 setStatus("Root ready", STATUS_WORKING);

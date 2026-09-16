@@ -17,7 +17,8 @@ verification, in-app update, boot-settle policy, and the in-app Wireless
 ADB transport (local ADB client, TLS 1.3/SPAKE2 pairing, mDNS discovery,
 temporary Wireless Debugging scope), and Shizuku auto-start (starter
 resolution, cross-process start lock, authenticated-intent fallback, boot
-service).
+service), and post-root automation (Shizuku start after root, userspace
+reboot via KernelSU's own soft-reboot).
 
 Reference: https://github.com/igorcv88/Root-My-Galaxy-Extended
 

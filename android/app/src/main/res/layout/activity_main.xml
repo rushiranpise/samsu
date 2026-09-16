@@ -276,6 +276,16 @@
                     android:background="?attr/colorOutlineVariant" />
 
                 <com.google.android.material.button.MaterialButton
+                    android:id="@+id/soft_reboot_after_root"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginBottom="10dp"
+                    android:text="@string/soft_reboot_after_root_off"
+                    android:textColor="#66FFFFFF"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.button.MaterialButton
                     android:id="@+id/boot_settle"
                     style="@style/Widget.Material3.Button.OutlinedButton"
                     android:layout_width="match_parent"
@@ -414,6 +424,16 @@
                     android:layout_height="48dp"
                     android:layout_marginTop="8dp"
                     android:text="@string/shizuku_boot_off"
+                    android:textColor="#66FFFFFF"
+                    android:textSize="14sp" />
+
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/shizuku_after_root"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="8dp"
+                    android:text="@string/shizuku_after_root_off"
                     android:textColor="#66FFFFFF"
                     android:textSize="14sp" />
             </LinearLayout>
