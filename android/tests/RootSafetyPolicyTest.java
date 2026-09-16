@@ -43,6 +43,19 @@ public final class RootSafetyPolicyTest {
         RootSafetyPolicy.resetConfiguredSeconds();
         expect(180_000L, RootSafetyPolicy.bootSettleRemainingMillis(0));
 
+        // The countdown label rounds up, so it never shows 0:00 while waiting.
+        expect("0:00", RootSafetyPolicy.formatRemaining(0));
+        expect("0:00", RootSafetyPolicy.formatRemaining(-5_000));
+        // Only an exactly-elapsed wait reads 0:00; any remainder rounds up.
+        expect("0:01", RootSafetyPolicy.formatRemaining(999));
+        expect("0:01", RootSafetyPolicy.formatRemaining(1));
+        expect("0:01", RootSafetyPolicy.formatRemaining(1_000));
+        expect("0:09", RootSafetyPolicy.formatRemaining(8_100));
+        expect("0:59", RootSafetyPolicy.formatRemaining(59_000));
+        expect("1:00", RootSafetyPolicy.formatRemaining(59_500));
+        expect("2:00", RootSafetyPolicy.formatRemaining(120_000));
+        expect("10:00", RootSafetyPolicy.formatRemaining(600_000));
+
         long[] allowed = RootSafetyPolicy.allowedSeconds();
         if (allowed.length == 0 || allowed[0] < 60) {
             throw new AssertionError("allowed waits must keep a safe floor");
@@ -52,6 +65,12 @@ public final class RootSafetyPolicyTest {
         expect(120L, RootSafetyPolicy.allowedSeconds()[0]);
 
         System.out.println("RootSafetyPolicy PASS");
+    }
+
+    private static void expect(String expected, String actual) {
+        if (!expected.equals(actual)) {
+            throw new AssertionError("expected=" + expected + " actual=" + actual);
+        }
     }
 
     private static void expect(long expected, long actual) {

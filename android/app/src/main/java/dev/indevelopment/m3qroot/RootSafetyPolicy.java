@@ -67,4 +67,17 @@ public final class RootSafetyPolicy {
         long target = normalizeSeconds(seconds) * 1_000L;
         return Math.max(0L, target - elapsedRealtimeMillis);
     }
+
+    /**
+     * mm:ss label for a wait that is still running.
+     *
+     * Rounds up, so the label never reads 0:00 while the gate is in fact still
+     * closed: the last visible second must be 0:01.
+     */
+    public static String formatRemaining(long millis) {
+        long seconds = Math.max(0L, (millis + 999L) / 1_000L);
+        long minutes = seconds / 60L;
+        long rest = seconds % 60L;
+        return minutes + ":" + (rest < 10L ? "0" : "") + rest;
+    }
 }

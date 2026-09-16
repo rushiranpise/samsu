@@ -68,6 +68,9 @@ public final class MainActivity extends AppCompatActivity {
     private static final int RUN_LOG_KEEP_CHARS = 128 * 1024;
 
     private final Handler ui = new Handler(Looper.getMainLooper());
+    private final Runnable settleTicker = this::tickSettleCountdown;
+    private boolean settleTickerActive;
+    private boolean settleWaitExplained;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
     private final AtomicBoolean running = new AtomicBoolean();
     private final AtomicBoolean shizukuPermissionPending = new AtomicBoolean();
@@ -788,6 +791,56 @@ public final class MainActivity extends AppCompatActivity {
                         : " (grant failed; toggle Wireless Debugging by hand)"));
     }
 
+    /* ---- boot-settle countdown --------------------------------------- */
+
+    /**
+     * The gate counts kernel uptime, not time since a press, so it needs to be
+     * visible while it runs: the button stays disabled with the remaining time
+     * on it, ticking every second, instead of accepting a press that is then
+     * refused.
+     */
+    private void startSettleCountdown(long remainingMillis) {
+        if (!settleWaitExplained) {
+            settleWaitExplained = true;
+            append(getString(R.string.boot_settle_wait_explained,
+                    RootSafetyPolicy.formatRemaining(remainingMillis)));
+        }
+        settleTickerActive = true;
+        setStatus(getString(R.string.boot_settle_status), STATUS_WORKING);
+        renderSettleCountdown(remainingMillis);
+        ui.removeCallbacks(settleTicker);
+        ui.postDelayed(settleTicker, 1000L);
+    }
+
+    private void stopSettleCountdown() {
+        settleTickerActive = false;
+        ui.removeCallbacks(settleTicker);
+    }
+
+    private void tickSettleCountdown() {
+        if (running.get() || isFinishing()) {
+            stopSettleCountdown();
+            return;
+        }
+        long remaining = M3qRootEngine.bootSettleRemainingMillis();
+        if (remaining <= 0) {
+            stopSettleCountdown();
+            settleWaitExplained = false;
+            append(getString(R.string.boot_settle_ready));
+            worker.execute(this::refreshRootState);
+            return;
+        }
+        renderSettleCountdown(remaining);
+        ui.postDelayed(settleTicker, 1000L);
+    }
+
+    private void renderSettleCountdown(long remainingMillis) {
+        String label = RootSafetyPolicy.formatRemaining(remainingMillis);
+        run.setText(getString(R.string.run_wait, label));
+        run.setEnabled(false);
+        setStatusDetail(getString(R.string.boot_settle_remaining, label));
+    }
+
     /* ---- boot-settle wait -------------------------------------------- */
 
     private void renderBootSettleButton() {
@@ -815,6 +868,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void applyBootSettleSeconds(long seconds) {
+        settleWaitExplained = false;
         RootSafetyPolicy.setConfiguredSeconds(seconds);
         BootSettlePreferences.set(this, seconds);
         renderBootSettleButton();
@@ -1129,6 +1183,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void lockUiForRun(String job) {
+        stopSettleCountdown();
         beginRunHistory(job);
         run.setEnabled(false);
         reapplyModules.setEnabled(false);
@@ -1150,9 +1205,13 @@ public final class MainActivity extends AppCompatActivity {
             unrootReboot.setEnabled(false);
             statusRefresh.setEnabled(true);
             getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-            long settle = RootSafetyPolicy.configuredSeconds();
-            setStatus("Wait " + settle + " seconds", STATUS_NEUTRAL);
-            setStatusDetail("Device was freshly booted, wait for idle.");
+            long settle = M3qRootEngine.bootSettleRemainingMillis();
+            if (settle > 0) {
+                startSettleCountdown(settle);
+            } else {
+                setStatus("Not started", STATUS_NEUTRAL);
+                setStatusDetail("Nothing was run. Hold to root when ready.");
+            }
         });
     }
 
@@ -1163,6 +1222,7 @@ public final class MainActivity extends AppCompatActivity {
 
     private void renderRootState(M3qRootEngine.RootState state) {
         runIsReboot = false;
+        stopSettleCountdown();
         if (state.terminationUnconfirmed()) {
             run.setVisibility(View.VISIBLE);
             setStatus("Job status unknown", STATUS_WARNING);
@@ -1189,12 +1249,15 @@ public final class MainActivity extends AppCompatActivity {
         } else {
             run.setVisibility(View.VISIBLE);
             setStatus("Unrooted", STATUS_NEUTRAL);
-            setStatusDetail(deviceSupported()
-                    ? "Device verified - Wait " + RootSafetyPolicy.configuredSeconds()
-                            + "s after boot"
-                    : "Wait " + RootSafetyPolicy.configuredSeconds() + "s after boot");
             run.setText(R.string.root_activate);
             run.setEnabled(deviceSupported());
+            setStatusDetail(deviceSupported()
+                    ? "Device verified - ready to root"
+                    : "No payload for this device");
+            long settle = M3qRootEngine.bootSettleRemainingMillis();
+            if (settle > 0) {
+                startSettleCountdown(settle);
+            }
         }
         boolean ksuOk = ksuManagerVersionOk();
         boolean maintenanceReady = state.ready() && !running.get() && ksuOk;
@@ -1666,6 +1729,7 @@ public final class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onDestroy() {
+        stopSettleCountdown();
         Shizuku.removeRequestPermissionResultListener(shizukuPermissionListener);
         worker.shutdown();
         super.onDestroy();

@@ -50,6 +50,11 @@
     <string name="boot_settle_message_millis">Minimum kernel uptime before a root run is allowed. Shorter is faster after a reboot but leaves the exploit racing a kernel that is still settling.</string>
     <string name="boot_settle_wait_long">%1$d seconds</string>
     <string name="boot_settle_applied">Boot wait set to %1$d seconds.</string>
+    <string name="boot_settle_status">Waiting for the kernel to settle</string>
+    <string name="boot_settle_remaining">Ready in %1$s &#183; counted from boot, not from your press</string>
+    <string name="run_wait">Wait %1$s</string>
+    <string name="boot_settle_wait_explained">Boot-settle wait: %1$s remaining, counted from kernel boot rather than from a press.</string>
+    <string name="boot_settle_ready">Boot-settle wait complete; the root button is ready.</string>
     <string name="update_title">SamSU update available</string>
     <string name="update_message">Version %1$s is available; this build is %2$s.</string>
     <string name="update_install">Download and install</string>
