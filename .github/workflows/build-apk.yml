@@ -27,6 +27,13 @@ on:
         description: 'Version name for the artifacts (default: 1.68)'
         required: false
         type: string
+      publish:
+        # A tag push always publishes; this exists so a manual run can do the
+        # same without hand-creating a tag first.
+        description: 'Create a GitHub release, tagging this commit v<version>'
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -198,9 +205,11 @@ jobs:
           if-no-files-found: error
 
       - name: Publish the release
-        if: startsWith(github.ref, 'refs/tags/')
+        if: startsWith(github.ref, 'refs/tags/') || inputs.publish == true
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('v{0}', steps.version.outputs.name) }}
+          name: SamSU ${{ steps.version.outputs.name }}
           files: |
             dist/SamSU-*-debug.apk
             dist/SamSU-*-release.apk
